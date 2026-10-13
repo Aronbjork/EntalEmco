@@ -89,12 +89,12 @@
      */
     zPathClear(x, z1, z2) {
       const lo = Math.min(z1, z2), hi = Math.max(z1, z2);
-      if (lo > this.zMaterial + 1e-9) return true;
+      if (lo >= this.zMaterial - 1e-6) return true;        // whole path at or in front of the face plane: air
       const E = this.env; if (!E) return x >= this.safeX - 1e-9;
       const i0 = Math.max(0, Math.floor((lo - E.z0) / E.dz)), i1 = Math.min(E.env.length - 1, Math.ceil((hi - E.z0) / E.dz));
       if (lo < E.z0 - 1e-9) return false;                 // beyond the -Z end of the grid: unknown → unsafe
       for (let i = i0; i <= i1; i++) {
-        if (E.z0 + i * E.dz > this.zMaterial + 1e-9) continue;
+        if (E.z0 + i * E.dz >= this.zMaterial - 1e-6) continue;
         if (!(E.env[i] < x - 1e-6)) return false;
       }
       return true;
