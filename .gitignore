@@ -1,0 +1,8 @@
+# Reference material (manuals, installers, third-party sample programs, docker env) — not part of the app
+Emco/
+
+# Stray / temporary files
+a
+*.log
+.DS_Store
+Thumbs.db

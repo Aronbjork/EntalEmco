@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compact 5 CAM</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span>Compact 5 CAM</div>
+  <input id="projName" type="text" placeholder="Project name" title="Project name">
+  <button id="btnNew">New</button>
+  <button id="btnOpen">Open project…</button>
+  <button id="btnSave">Save project</button>
+  <button id="btnImportDxf">Import DXF…</button>
+  <button id="btnOpenCnc">Open .CNC…</button>
+  <button id="btnExport">Export .CNC</button>
+  <div class="spacer"></div>
+  <button id="btnSend" class="primary">Send to lathe</button>
+  <button id="btnTheme" class="icon" title="Toggle dark mode">◐</button>
+  <button id="btnHelp" class="icon" title="Help">?</button>
+</header>
+
+<main>
+  <aside class="sidebar" id="sidebar">
+    <nav class="tabs">
+      <button data-tab="setup" class="active">Setup</button>
+      <button data-tab="profile">Profile</button>
+      <button data-tab="ops">Operations</button>
+      <button data-tab="program">Program</button>
+    </nav>
+
+    <section class="tabpanel active" id="tab-setup">
+      <h3>Stock</h3>
+      <label class="field"><span class="name">Diameter <small>mm</small></span><input type="number" id="stockDia" step="0.1" min="0.1"></label>
+      <label class="field"><span class="name">Length shown <small>mm</small></span><input type="number" id="stockLen" step="1" min="1"></label>
+      <label class="field"><span class="name">Material in front of Z0 <small>mm</small></span><input type="number" id="stockFront" step="0.1" min="0"></label>
+      <p class="hint">Z0 is the finished face of the part. "Material in front" is extra stock that a Facing operation removes; leave it 0 if you zero Z on the end of the bar.</p>
+      <h3>Machine</h3>
+      <label class="field"><span class="name">Controller</span><select id="controller"><option value="MK4">Compact 5 CNC Mk3 / Mk4</option><option value="MK2">Compact 5 CNC Mk1 / Mk2</option></select></label>
+      <label class="field"><span class="name">Clearance X (radial) <small>mm</small></span><input type="number" id="clearX" step="0.1" min="0"></label>
+      <label class="field"><span class="name">Clearance Z <small>mm</small></span><input type="number" id="clearZ" step="0.1" min="0"></label>
+      <label class="field"><span class="name">Start position X <small>Ø mm</small></span><input type="number" id="startDia" step="0.1"></label>
+      <label class="field"><span class="name">Start position Z <small>mm</small></span><input type="number" id="startZ" step="0.1"></label>
+      <label class="field"><span class="name">Spindle M03 / M05 blocks (Mk4)</span><input type="checkbox" id="spindle"></label>
+      <p class="hint">The program begins with G92 at the start position, so put the tool tip exactly there before pressing START on the lathe. X is always programmed as a diameter (G92 X2700 = tool tip at Ø27.00).</p>
+      <div class="row"><button id="btnQuickOps" class="small">Quick setup: Rough + Finish</button></div>
+    </section>
+
+    <section class="tabpanel" id="tab-profile">
+      <div class="row">
+        <button id="btnProfileFromStock" class="small">Example profile</button>
+        <button id="btnProfileClear" class="small">Clear</button>
+        <span class="grow"></span>
+        <span class="muted" id="profileCount"></span>
+      </div>
+      <p class="hint">Draw the upper half of the part from the face (Z = 0) toward the chuck (−Z). X is the radius, Ø the diameter. Use <b>Add points</b> on the canvas, drag points in <b>Select</b> mode, or type values here. The "→ next" column defines the segment to the following point.</p>
+      <div class="row">
+        <span class="muted">Corner</span>
+        <input type="number" id="cornerVal" value="1" step="0.1" min="0.05" style="width:70px">
+        <button id="btnFillet" class="small">Fillet R</button>
+        <button id="btnChamfer" class="small">Chamfer</button>
+        <span class="muted">at selected point</span>
+      </div>
+      <table class="pts">
+        <thead><tr><th>#</th><th>Z</th><th>X (r)</th><th>Ø</th><th>→ next</th><th></th></tr></thead>
+        <tbody id="ptsBody"></tbody>
+      </table>
+      <div class="row" style="margin-top:6px"><button id="btnAddPoint" class="small">+ Add point at end</button></div>
+    </section>
+
+    <section class="tabpanel" id="tab-ops">
+      <h3>Add operation</h3>
+      <div class="addmenu" id="addMenu"></div>
+      <h3>Sequence</h3>
+      <div class="oplist" id="opList"></div>
+      <p class="hint" id="opsHint">No operations yet. Typical order: Facing → Rough turning → Finish contour → Groove / Thread → Parting off.</p>
+      <div class="opform" id="opForm" hidden></div>
+    </section>
+
+    <section class="tabpanel" id="tab-program">
+      <div class="row">
+        <span class="pill" id="progSource">Generated from operations</span>
+        <button id="btnUseGenerated" class="small" hidden>Back to generated</button>
+        <span class="grow"></span>
+        <button id="btnCopy" class="small">Copy</button>
+        <button id="btnDownload" class="small">Download .CNC</button>
+      </div>
+      <div class="warnings" id="warnings" hidden></div>
+      <pre class="listing" id="listing"></pre>
+      <div class="hint" id="progStats"></div>
+
+      <h3>Serial link</h3>
+      <div class="row">
+        <button id="btnConnect">Connect…</button>
+        <span class="pill" id="serialStatus">disconnected</span>
+        <span class="grow"></span>
+        <button id="btnSerialSend" class="primary" disabled>Send program</button>
+        <button id="btnCancelSend" class="small" hidden>Cancel</button>
+      </div>
+      <div class="progress"><div id="sendProgress"></div></div>
+      <div class="serialgrid">
+        <label class="field"><span class="name">Baud</span><select id="serBaud"><option>110</option><option>300</option><option>600</option><option>1200</option><option>2400</option><option>4800</option><option>9600</option></select></label>
+        <label class="field"><span class="name">Data bits</span><select id="serData"><option>7</option><option>8</option></select></label>
+        <label class="field"><span class="name">Stop bits</span><select id="serStop"><option>1</option><option>2</option></select></label>
+        <label class="field"><span class="name">Parity</span><select id="serParity"><option value="none">None</option><option value="even">Even</option><option value="odd">Odd</option></select></label>
+        <label class="field"><span class="name">Handshake</span><select id="serFlow"><option value="none">None</option><option value="hardware">RTS/CTS</option></select></label>
+        <label class="field"><span class="name">Line ending</span><select id="serEol"><option value="crlf">CR LF</option><option value="cr">CR</option><option value="lf">LF</option></select></label>
+        <label class="field"><span class="name">Delay per line <small>ms</small></span><input type="number" id="serLineDelay" step="10" min="0"></label>
+        <label class="field"><span class="name">Delay per char <small>ms</small></span><input type="number" id="serCharDelay" step="1" min="0"></label>
+        <label class="field"><span class="name">Assert DTR</span><input type="checkbox" id="serDtr"></label>
+        <label class="field"><span class="name">Assert RTS</span><input type="checkbox" id="serRts"></label>
+        <label class="field"><span class="name">Send header line</span><input type="checkbox" id="serHeader"></label>
+        <label class="field"><span class="name">Send closing "M" line</span><input type="checkbox" id="serTrailer"></label>
+      </div>
+      <p class="hint">Defaults match Mike's Free Interface: 300 baud, 8 data bits, 1 stop bit, no parity, no handshake.<br><b>On the lathe:</b> CNC mode, enter <kbd>G66</kbd> <kbd>INP</kbd> <kbd>INP</kbd> (display shows "A LO"), press <kbd>START</kbd>, then click <b>Send program</b> here. Anything the lathe sends back (G66 in send mode) appears below.</p>
+      <div class="row"><span class="muted">Received from lathe</span><span class="grow"></span><button id="btnUseReceived" class="small">Use as program</button><button id="btnClearLog" class="small">Clear</button></div>
+      <pre class="log" id="serialLog"></pre>
+    </section>
+  </aside>
+  <div class="resizer" id="resizer"></div>
+
+  <div class="canvas-wrap">
+    <div class="canvas-toolbar">
+      <button id="modeSelect" class="small active" title="Select / move points (S)">Select</button>
+      <button id="modeAdd" class="small" title="Click to add points (A)">Add points</button>
+      <button id="modePan" class="small" title="Pan (P)">Pan</button>
+      <span class="sep"></span>
+      <label>Snap <select id="snapSel"><option value="0">off</option><option value="0.1">0.1</option><option value="0.5" selected>0.5</option><option value="1">1</option></select> mm</label>
+      <label><input type="checkbox" id="chkDxf" checked> DXF</label>
+      <label><input type="checkbox" id="chkPath" checked> Toolpath</label>
+      <label><input type="checkbox" id="chkMirror" checked> Mirror</label>
+      <button id="btnFit" class="small" title="Zoom to fit (F)">Fit</button>
+      <span class="sep"></span>
+      <button id="btnPlay" class="small">▶ Simulate</button>
+      <input type="range" id="simRange" min="0" max="1000" value="1000" title="Scrub through the toolpath">
+      <span id="simInfo" class="muted" style="font-size:12px"></span>
+    </div>
+    <canvas id="cv"></canvas>
+    <div class="statusbar"><span>Z <b id="stZ">–</b></span><span>X <b id="stX">–</b></span><span>Ø <b id="stD">–</b></span><span id="stHint" class="grow"></span><span id="stBlocks"></span></div>
+  </div>
+</main>
+
+<dialog id="dlgDxf">
+  <h2>Import DXF as profile</h2>
+  <div class="dxfgrid">
+    <label class="field"><span class="name">Axis along the part</span><select id="dxfZAxis"><option value="x">DXF X → Z</option><option value="y">DXF Y → Z</option></select></label>
+    <label class="field"><span class="name">Flip Z direction</span><input type="checkbox" id="dxfFlip"></label>
+    <label class="field"><span class="name">Profile side of centreline</span><select id="dxfSide"><option value="1">Above (+)</option><option value="-1">Below (−)</option></select></label>
+    <label class="field"><span class="name">Centreline at drawing coordinate</span><input type="number" id="dxfAxisPos" step="0.01"></label>
+    <label class="field"><span class="name">Face (Z = 0) at drawing coordinate</span><input type="number" id="dxfZZero" step="0.01"></label>
+    <label class="field"><span class="name">Scale</span><select id="dxfScale"><option value="1">1 (drawing in mm)</option><option value="25.4">25.4 (inch → mm)</option><option value="0.1">0.1</option><option value="10">10</option></select></label>
+    <label class="field"><span class="name">Use chain</span><select id="dxfChain"></select></label>
+    <label class="field"><span class="name">Drop segments on the centreline</span><input type="checkbox" id="dxfRemoveAxis" checked></label>
+  </div>
+  <canvas id="dxfPreview"></canvas>
+  <div id="dxfInfo" class="hint"></div>
+  <div class="dlgbtns"><button id="dxfAuto">Auto-detect</button><button id="dxfCancel">Cancel</button><button id="dxfOk" class="primary">Use as profile</button></div>
+</dialog>
+
+<dialog id="dlgHelp" class="help">
+  <h2>Compact 5 CAM — quick guide</h2>
+  <h4>Workflow</h4>
+  <ol class="steps">
+    <li><b>Setup:</b> stock diameter, controller type, clearances and the tool start position (where you park the tool before START).</li>
+    <li><b>Profile:</b> draw the upper half of the part from the face (Z = 0) toward the chuck (−Z), or import a DXF. Arcs are set per segment (radius + G02/G03). Use Fillet / Chamfer on a corner point.</li>
+    <li><b>Operations:</b> add Facing, Rough turning, Finish contour, Groove, Parting, Drilling, Thread, Tool change or Custom blocks. Order = program order.</li>
+    <li><b>Program:</b> check the listing and warnings, scrub the simulation, then Send to the lathe or Download a .CNC file for Mike's Free Interface.</li>
+  </ol>
+  <h4>Lathe conventions used</h4>
+  <ul class="steps">
+    <li>X values are <b>diameters</b> in 1/100 mm (G92 / absolute mode), Z in 1/100 mm, feed F in mm/min.</li>
+    <li>Arcs are G02 (clockwise) / G03 (counter-clockwise) viewed with Z to the right and X up, each followed by an M99 block with the positive I (radial) and K (axial) distances from the arc start to its centre. Arcs are split automatically at quadrant boundaries.</li>
+    <li>Mk1/Mk2 controllers have no M-codes: the program ends with G22, pause is G20, tool change G26. Their arcs only allow fixed radii — tick "Arcs as short lines" in the Finish operation.</li>
+    <li>Thread (G33) and tool change (M06 / G26) block layouts have not been verified against a real machine. Receive a program from your lathe that uses them and compare before relying on them.</li>
+  </ul>
+  <h4>Sending</h4>
+  <p>Web Serial works in Chrome and Edge. Connect, pick the COM port of your cable, put the lathe in receive mode (<kbd>G66</kbd> <kbd>INP</kbd> <kbd>INP</kbd>, display "A LO", <kbd>START</kbd>) and click Send. If blocks go missing, raise the delay per line. To check the exact format your machine expects, send a program <i>from</i> the lathe (G66 in output mode) and look at the received text.</p>
+  <h4>Keys</h4>
+  <p><kbd>S</kbd> select · <kbd>A</kbd> add points · <kbd>P</kbd> pan · <kbd>F</kbd> fit · <kbd>Del</kbd> delete point · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> undo / redo · mouse wheel zooms · drag empty space to pan.</p>
+  <div class="dlgbtns"><button id="helpClose" class="primary">Close</button></div>
+</dialog>
+
+<input type="file" id="fileDxf" accept=".dxf,.DXF" hidden>
+<input type="file" id="fileCnc" accept=".cnc,.CNC,.txt,.nc" hidden>
+<input type="file" id="fileProj" accept=".json" hidden>
+<div class="toast" id="toast"></div>
+
+<script src="js/geom.js"></script>
+<script src="js/dxf.js"></script>
+<script src="js/emco.js"></script>
+<script src="js/cam.js"></script>
+<script src="js/serial.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
