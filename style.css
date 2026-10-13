@@ -103,7 +103,8 @@ table.pts .idx { color: var(--muted); width: 22px; cursor: pointer; }
 .warnings div { padding: 1px 0; }
 pre.listing { font-family: var(--mono); font-size: 12px; line-height: 1.45; background: var(--panel2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 0; overflow: auto; max-height: 42vh; white-space: pre; }
 pre.listing .c { color: var(--ok); }
-pre.listing .n { color: var(--muted); }
+pre.listing .ln.cur { background: var(--accent-soft); color: var(--accent); display: inline-block; width: 100%; }
+#simSpeed { padding: 2px 4px; font-size: 12px; }
 .progress { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 6px 0; }
 .progress div { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
 pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--panel2); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; height: 150px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; }

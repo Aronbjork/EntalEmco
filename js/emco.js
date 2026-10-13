@@ -1,23 +1,41 @@
-/* emco.js — Emco Compact 5 CNC program format.
+/* emco.js — everything about the Emco Compact 5 CNC program format.
  *
- * A block is { n, g | m, x, z, f, h, i, k, t, l } with every numeric value already an
- * INTEGER in machine units: X = diameter in 1/100 mm, Z = 1/100 mm, I/K = radius offsets
- * in 1/100 mm, F = mm/min, H = cycle parameter. Comment lines are { comment: 'text' }.
+ * BLOCKS
+ *   A program is a list of blocks. A block is a plain object
+ *     { n, g | m, x, z, f, h, i, k, kf, t, l }
+ *   where every numeric value is already an INTEGER in machine units:
+ *     x   diameter in 1/100 mm (X2700 = Ø27.00)        z   position in 1/100 mm
+ *     i,k arc centre offsets in 1/100 mm, radial / axial, always positive (M99 block)
+ *     f   feed in mm/min                                h   cycle parameter / dwell / tool
+ *     kf  thread pitch in 1/100 mm written in the F column (G33 / G78)
+ *     t   tool number (M06 / G26)                      l   jump / subroutine label (G25 / G27)
+ *   Comment lines are { comment: 'text' }; they are shown on screen but never sent.
  *
- * Text layout is the one Mike's Free Interface (MFI) writes and the lathe sends out:
- *   %
- *       N` G`   X `    Z `  F`  H
- *       00 92  2700    100
- *       01M03
- *       03 01  2310 - 3790 150
- *       32M99 I 678 K  212
- *      121M30
- *      M
- * Columns: N right-aligned in 6 | ' 'GG or MMM | X: sign + 5 | Z: ' ' + sign + 5 | F: ' ' + 3 | H: ' ' + 3, padded to 32.
+ * TEXT LAYOUT
+ *   This is the fixed-column layout that the lathe transmits and that Mike's Free
+ *   Interface (MFI) saves. It was taken from the MK4 sample programs:
+ *     %
+ *         N` G`   X `    Z `  F`  H
+ *         00 92  2700    100
+ *         01M03
+ *         03 01  2310 - 3790 150
+ *         32M99 I 678 K  212
+ *        121M30
+ *        M
+ *   Column by column (0-based):
+ *     0-5   block number, right-aligned, at least two digits ("00")
+ *     6-8   " GG" for a G-code or "MMM" for an M-code (no space before M)
+ *     9-14  X field: sign (space or '-') + value right-aligned in 5      — or " I" + value in 4 for M99
+ *     15-21 Z field: space + sign + value right-aligned in 5             — or " K" + value in 5 for M99
+ *     22-25 F field: space + value right-aligned in 3                    — or K/T/L + value
+ *     26-29 H field: space + value right-aligned in 3
+ *   Lines are padded with spaces to 32 characters and end with CR LF. Numbers are
+ *   written with at least two digits, so zero becomes "00".
  */
 (function (global) {
   'use strict';
 
+  /** Differences between the two controller generations that matter for program generation. */
   const CONTROLLERS = {
     MK4: { label: 'Compact 5 CNC Mk3 / Mk4', endBlock: { m: 30 }, spindleOn: { m: 3 }, spindleOff: { m: 5 }, toolChange: 'M06', dwell: true, pause: { m: 0 } },
     MK2: { label: 'Compact 5 CNC Mk1 / Mk2', endBlock: { g: 22 }, spindleOn: null, spindleOff: null, toolChange: 'G26', dwell: false, pause: { g: 20 } }
@@ -25,9 +43,12 @@
   const HEADER_LINE = '    N` G`   X `    Z `  F`  H ';
   const LINE_WIDTH = 32;
 
+  /** Two-digit zero padded number ("05"). */
   function two(v) { return String(v).padStart(2, '0'); }
+  /** Absolute value, at least two digits, right-aligned in a field of width w. */
   function numField(v, w) { let s = String(Math.abs(Math.round(v))); if (s.length < 2) s = s.padStart(2, '0'); return s.padStart(w, ' '); }
 
+  /** Format one numbered block as a 32-character line (see the layout table above). */
   function formatBlock(b) {
     let s = String(two(b.n)).padStart(6, ' ');
     if (b.m != null) s += 'M' + two(b.m); else s += ' ' + two(b.g);
@@ -38,7 +59,7 @@
     else if (b.z != null) s += ' ' + (b.z < 0 ? '-' : ' ') + numField(b.z, 5);
     else s += '       ';
     if (b.f != null) s += ' ' + numField(b.f, 3);
-    else if (b.kf != null) s += ' K' + numField(b.kf, 3);        // thread pitch in the F column (G33 / G78)
+    else if (b.kf != null) s += ' K' + numField(b.kf, 3);
     else if (b.t != null) s += ' T' + numField(b.t, 2);
     else if (b.l != null) s += ' L' + numField(b.l, 2);
     else s += '    ';
@@ -46,12 +67,16 @@
     return s.padEnd(LINE_WIDTH, ' ');
   }
 
-  /** Assign block numbers (skipping comment lines) and return the numbered list. */
+  /** Give every non-comment block a sequential number N starting at 0. Returns a new list. */
   function number(blocks) {
     let n = 0;
     return blocks.map(b => b.comment != null ? b : Object.assign({}, b, { n: n++ }));
   }
 
+  /**
+   * Render the whole program as text ready to send or save.
+   * opts: { eol: '\r\n', header: true (the N` G` … line), trailer: true (the final "   M" line) }
+   */
   function formatProgram(blocks, opts) {
     opts = opts || {};
     const eol = opts.eol || '\r\n';
@@ -62,7 +87,7 @@
     return out.join(eol) + eol;
   }
 
-  /** Human-readable listing with comments for the on-screen view. */
+  /** Rows for the on-screen listing: { comment } or { text, block }. */
   function listing(blocks) {
     const rows = [];
     for (const b of number(blocks)) rows.push(b.comment != null ? { comment: b.comment } : { text: formatBlock(b), block: b });
@@ -71,6 +96,11 @@
 
   /* ---------- parsing (files from MFI / the lathe, or free-format text) ---------- */
 
+  /**
+   * Parse program text into blocks. Accepts both the fixed-column layout (files from
+   * MFI or received from the lathe) and free text such as "N01 G01 X1200 Z-500 F150".
+   * Lines starting with '(' or ';' become comments. Returns { blocks, warnings }.
+   */
   function parseProgram(text) {
     const blocks = []; const warnings = [];
     const lines = text.split(/\r?\n/);
@@ -87,17 +117,21 @@
     return { blocks, warnings };
   }
 
+  /**
+   * Parse a fixed-column line. The block number and G/M code are matched with a
+   * regular expression; the remaining numbers are assigned to X, Z, F and H by the
+   * column where they appear (a letter I/K/T/L in front of a number overrides that).
+   * Returns null if the line is not in column format.
+   */
   function parseColumnLine(line) {
     const m = /^\s{2,4}(\d{2,3})(M(\d\d)| (\d\d))(.*)$/.exec(line);
     if (!m) return null;
     const b = {};
     if (m[3] != null) b.m = parseInt(m[3], 10); else b.g = parseInt(m[4], 10);
     const rest = m[5];
-    // tokens: a letter or sign may be separated from its digits by spaces
     const toks = []; const re = /([-IKTL])?\s*(\d+)/g; let mm;
     while ((mm = re.exec(rest)) !== null) toks.push({ tag: mm[1] || '', v: parseInt(mm[2], 10), pos: mm.index });
-    // position-based assignment: X-field ends before column 15, Z-field before 22, F before 26
-    const colOf = (tok) => tok.pos + 9;   // rest starts at column 9
+    const colOf = (tok) => tok.pos + 9;        // `rest` starts at column 9 of the line
     let seenX = false, seenZ = false, seenF = false;
     for (const tok of toks) {
       const c = colOf(tok);
@@ -112,6 +146,11 @@
     return b;
   }
 
+  /**
+   * Parse a free-format line ("G01 X1200 Z-500 F150"). Values with a decimal point are
+   * taken as millimetres and converted to 1/100 mm (X12.5 → 1250); values without one
+   * are taken as machine units as-is. Returns null if no G or M code is present.
+   */
   function parseFreeLine(line) {
     const b = {}; let any = false;
     const re = /([NGMXZFHIKTL])\s*(-?\d+(?:\.\d+)?)/gi; let m;
@@ -137,15 +176,26 @@
     return b;
   }
 
-  /* ---------- simulation: blocks → moves (absolute mm, X = radius) ---------- */
+  /* ---------- simulation: blocks → moves ---------- */
 
+  /**
+   * Walk through the blocks the way the controller would and produce MOVES in
+   * absolute millimetres with X as radius:
+   *   { type: 'set',   from, to, block }            G92: defines where the tool is
+   *   { type: 'rapid', from, to, block }            G00
+   *   { type: 'feed',  from, to, block, f }         G01 (and cycles, drawn as one move)
+   *   { type: 'arc',   from, to, arc, block, f }    G02/G03 with the following M99 resolved
+   *   { type: 'other', at, block }                  everything else (M-codes, G04 …)
+   * Handles G90 (absolute, X = diameter) and G91 (incremental, X = radius movement).
+   * Returns { moves, warnings }.
+   */
   function blocksToMoves(blocks) {
     const moves = []; const warnings = [];
     let abs = true, pos = { z: 0, x: 0 }, known = false;
     const list = blocks.filter(b => b.comment == null);
     for (let idx = 0; idx < list.length; idx++) {
       const b = list[idx];
-      if (b.g === 92) { pos = { z: (b.z || 0) / 100, x: (b.x || 0) / 200 }; abs = true; known = true; moves.push({ type: 'set', to: pos, block: b }); continue; }
+      if (b.g === 92) { const np = { z: (b.z || 0) / 100, x: (b.x || 0) / 200 }; moves.push({ type: 'set', from: pos, to: np, block: b }); pos = np; abs = true; known = true; continue; }
       if (b.g === 90) { abs = true; continue; }
       if (b.g === 91) { abs = false; continue; }
       if (b.g === 0 || b.g === 1 || b.g === 2 || b.g === 3 || b.g === 33 || b.g === 84 || b.g === 88) {
@@ -158,7 +208,7 @@
             const arc = resolveArc(pos, target, nx.i / 100, nx.k / 100, b.g === 3);
             if (arc) moves.push({ type: 'arc', from: pos, to: target, arc, block: b, f: b.f });
             else { warnings.push('Block ' + (b.n != null ? b.n : idx) + ': could not resolve arc centre; drawn as a line.'); moves.push({ type: 'feed', from: pos, to: target, block: b, f: b.f }); }
-            idx++;
+            idx++;                                   // the M99 block has been consumed
           } else { warnings.push('Block ' + (b.n != null ? b.n : idx) + ': G0' + b.g + ' without a following M99 I K block.'); moves.push({ type: 'feed', from: pos, to: target, block: b, f: b.f }); }
         } else if (b.g === 0) moves.push({ type: 'rapid', from: pos, to: target, block: b });
         else { if (b.g === 84 || b.g === 88) warnings.push('Block ' + (b.n != null ? b.n : idx) + ': cycle G' + b.g + ' is shown as a single move only.'); moves.push({ type: 'feed', from: pos, to: target, block: b, f: b.f, cycle: b.g >= 33 }); }
@@ -170,7 +220,12 @@
     return { moves, warnings };
   }
 
-  /** Resolve the arc centre from |I| (radial) and |K| (axial) offsets measured from the start point. */
+  /**
+   * Find the arc centre from the M99 values. I and K are unsigned distances from the
+   * start point, so the centre is one of four candidates (start ± I, start ± K). The
+   * right one is the candidate for which the end point lies on the same circle and the
+   * arc stays within ~90°. Returns an arc object or null if nothing fits.
+   */
   function resolveArc(s, e, I, K, ccw) {
     let best = null;
     for (const si of [1, -1]) for (const sk of [1, -1]) {
@@ -184,6 +239,7 @@
     return best && best.score < 0.5 ? best.arc : null;
   }
 
+  /** Sanity checks on a finished program: block count, field overflow, feed range, codes the controller lacks. */
   function checkProgram(blocks, controller) {
     const w = [];
     const list = blocks.filter(b => b.comment == null);

@@ -1,5 +1,11 @@
-/* serial.js — Web Serial transport (Chrome / Edge). Sends program text line by line
- * with optional per-character and per-line delays, and listens for anything the lathe sends.
+/* serial.js — Web Serial transport (Chrome / Edge only).
+ *
+ * The Compact 5 talks plain ASCII at 300 baud. Mike's Free Interface uses
+ * 8 data bits, 1 stop bit, no parity and no handshake, and those are our defaults.
+ * The old controller has no input buffer to speak of, so the program is sent one line
+ * at a time with an optional pause between lines (and optionally between characters).
+ * Whatever the lathe sends back is read continuously and handed to `onData`, which the
+ * UI shows in the log; that is also how a program is received from the lathe.
  */
 (function (global) {
   'use strict';
@@ -7,8 +13,15 @@
     supported: typeof navigator !== 'undefined' && 'serial' in navigator,
     port: null, reader: null, reading: false, onData: null, onStatus: null, sending: false, abort: false,
 
+    /** Tell the UI about a state change ('connected' / 'disconnected'). */
     status(s) { if (this.onStatus) this.onStatus(s); },
 
+    /**
+     * Ask the browser for a port (shows the port picker) and open it with the given
+     * settings { baud, dataBits, stopBits, parity, flow, dtr, rts }. DTR/RTS are
+     * asserted when requested because some cables are powered from those lines.
+     * Reading starts immediately so incoming data is never missed.
+     */
     async connect(cfg) {
       if (!this.supported) throw new Error('Web Serial is not available. Use Chrome or Edge, and open the page from a file or https:// (not plain http on another machine).');
       const port = await navigator.serial.requestPort();
@@ -20,6 +33,7 @@
       return port;
     },
 
+    /** Stop reading, abort any transfer and close the port. */
     async disconnect() {
       this.abort = true;
       this.reading = false;
@@ -29,6 +43,11 @@
       this.status('disconnected');
     },
 
+    /**
+     * Background read loop. Bytes are decoded as Latin-1 (the lathe only sends ASCII)
+     * and passed to onData(text, bytes). Read errors (e.g. a cable pulled out) are
+     * reported through the same callback and the loop retries while still connected.
+     */
     async startReading() {
       if (!this.port || !this.port.readable || this.reading) return;
       this.reading = true;
@@ -49,7 +68,12 @@
       this.reading = false;
     },
 
-    /** Send text. cfg: { charDelay (ms), lineDelay (ms) }. onProgress(sentLines, totalLines). */
+    /**
+     * Send program text line by line. The line ending already present in the text is
+     * preserved. cfg: { charDelay (ms between characters, 0 = whole line at once),
+     * lineDelay (ms after each line) }. onProgress(sentLines, totalLines) is called
+     * after every line. Throws 'Transfer cancelled.' if cancel() was called.
+     */
     async send(text, cfg, onProgress) {
       if (!this.port || !this.port.writable) throw new Error('Not connected.');
       if (this.sending) throw new Error('Already sending.');
@@ -71,6 +95,7 @@
       } finally { writer.releaseLock(); this.sending = false; }
     },
 
+    /** Request that a running send() stops after the current line. */
     cancel() { this.abort = true; }
   };
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

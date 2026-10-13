@@ -133,8 +133,9 @@
       <label><input type="checkbox" id="chkMirror" checked> Mirror</label>
       <button id="btnFit" class="small" title="Zoom to fit (F)">Fit</button>
       <span class="sep"></span>
-      <button id="btnPlay" class="small">▶ Simulate</button>
+      <button id="btnPlay" class="small" title="Play / pause the simulation (Space)">▶ Simulate</button>
       <input type="range" id="simRange" min="0" max="1000" value="1000" title="Scrub through the toolpath">
+      <select id="simSpeed" title="Playback speed relative to real machining time"><option value="1">1×</option><option value="5">5×</option><option value="20" selected>20×</option><option value="100">100×</option></select>
       <span id="simInfo" class="muted" style="font-size:12px"></span>
     </div>
     <canvas id="cv"></canvas>
