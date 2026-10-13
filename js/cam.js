@@ -24,7 +24,7 @@
     finish: { label: 'Finish contour',   icon: '∿', defaults: { feed: 50, retract: 0.7, arcsAsLines: false, arcTol: 0.01 } },
     groove: { label: 'Groove',           icon: '⊔', defaults: { z: -10, width: 3, dia: 10, toolWidth: 2, toolRef: 'right', feed: 30, dwell: 0, stepFactor: 0.75 } },
     part:   { label: 'Parting off',      icon: '⟂', defaults: { z: -40, toolWidth: 2, toolRef: 'right', finalDia: 0, feed: 25, dwell: 0 } },
-    drill:  { label: 'Centre drilling',  icon: '⌀', defaults: { depth: 10, peck: 3, feed: 40, zTop: 0, retract: 0.5 } },
+    drill:  { label: 'Centre drilling',  icon: '⌀', defaults: { depth: 10, peck: 3, feed: 40, zTop: 0, retract: 0.5, manual: true } },
     thread: { label: 'Thread (G33)',     icon: '⌇', defaults: { dia: 10, pitch: 1.0, zStart: 2, zEnd: -15, depth: 0.61, passes: 6 } },
     tool:   { label: 'Tool change',      icon: '⚒', defaults: { tool: 1, dx: 0, dz: 0, pause: true } },
     custom: { label: 'Custom blocks',    icon: '✎', defaults: { text: 'G00 X2700 Z100' } }
@@ -50,6 +50,7 @@
       this.pos = { z: ctx.start.z, x: ctx.start.x };          // current tool position (mm, radius)
       this.safeX = ctx.stock.diameter / 2 + ctx.clearX;        // radius at which Z moves are always safe
       this.env = ctx.env;                                      // raw material envelope for safe-travel checks
+      this.zMaterial = ctx.zMaterial;                          // everything at Z greater than this is air (in front of the stock)
     }
     /** mm radius → machine X (diameter in 1/100 mm). */
     dia(x) { return Math.round(x * 200); }
@@ -81,13 +82,21 @@
         this._setPos(sub.end.x, sub.end.z);
       }
     }
-    /** True if a Z move at radius x between z1 and z2 stays above the finished profile everywhere. */
+    /**
+     * True if a Z move at radius x between z1 and z2 stays above the finished profile
+     * everywhere. The region in front of the stock (Z > zMaterial) is always air, so a
+     * move there is clear even at X = 0 (a drill on the centreline).
+     */
     zPathClear(x, z1, z2) {
-      const E = this.env; if (!E) return x >= this.safeX - 1e-9;
       const lo = Math.min(z1, z2), hi = Math.max(z1, z2);
+      if (lo > this.zMaterial + 1e-9) return true;
+      const E = this.env; if (!E) return x >= this.safeX - 1e-9;
       const i0 = Math.max(0, Math.floor((lo - E.z0) / E.dz)), i1 = Math.min(E.env.length - 1, Math.ceil((hi - E.z0) / E.dz));
       if (lo < E.z0 - 1e-9) return false;                 // beyond the -Z end of the grid: unknown → unsafe
-      for (let i = i0; i <= i1; i++) if (!(E.env[i] < x - 1e-6)) return false;
+      for (let i = i0; i <= i1; i++) {
+        if (E.z0 + i * E.dz > this.zMaterial + 1e-9) continue;
+        if (!(E.env[i] < x - 1e-6)) return false;
+      }
       return true;
     }
     /**
@@ -257,22 +266,40 @@
   };
 
   /**
-   * CENTRE DRILLING: a drill in the tool holder at X = 0. Pecks `peck` mm at a time
-   * with a full retract to the clearance position after each peck and a rapid back to
-   * just above the previous depth (retract gap) before the next one.
+   * CENTRE DRILLING: a drill in the tool holder. Pecks `peck` mm at a time with a full
+   * retract to the clearance position after each peck and a rapid back to just above
+   * the previous depth (retract gap) before the next one.
+   *
+   * Two ways to get the drill onto the centreline:
+   *   manual = true  The drill was centred BY HAND before START and the program start
+   *                  position is X Ø0. The operation then moves in Z only and never
+   *                  touches X, so the drill stays exactly where you put it. This is
+   *                  the normal way on a Compact 5 without tool offsets.
+   *   manual = false The drill shares the X zero of the turning tool (e.g. after a
+   *                  Tool change block with offsets): the tool first retracts to the
+   *                  safe radius, moves in front of the stock and rapids to X = 0.
    */
   GEN.drill = (em, op, ctx) => {
     const clearZ = ctx.clearZ, zTop = num(op.zTop, 0), depth = Math.max(0.1, num(op.depth, 5)), peck = num(op.peck, 0);
-    em.retractSafe();
-    em.travel(0, Math.max(ctx.stock.zFront, zTop) + clearZ);
     const zSafe = zTop + clearZ;
-    em.rapid(0, zSafe);
+    let x;
+    if (op.manual !== false) {
+      x = em.pos.x;
+      if (Math.abs(x) > 0.005) em.warnings.push('Centre drilling: the drill is centred by hand, but the tool is at Ø' + (x * 2).toFixed(2) + ' when the operation starts. Set the start position X to Ø0 (Setup tab) or put a Tool change before it.');
+      if (em.pos.z < zSafe - 1e-9) em.warnings.push('Centre drilling: the tool starts at Z' + em.pos.z.toFixed(2) + ', behind the drilling start. It is moved straight to Z' + zSafe.toFixed(2) + ' in Z only.');
+      em.rapid(x, zSafe);
+    } else {
+      x = 0;
+      em.retractSafe();
+      em.travel(0, Math.max(ctx.stock.zFront, zTop) + clearZ);
+      em.rapid(0, zSafe);
+    }
     let d = 0;
     while (d < depth - 1e-9) {
       const next = peck > 0 ? Math.min(depth, d + peck) : depth;
-      if (d > 0) em.rapid(0, zTop - d + Math.min(num(op.retract, 0.5), d));
-      em.feed(0, zTop - next, op.feed);
-      em.rapid(0, zSafe);
+      if (d > 0) em.rapid(x, zTop - d + Math.min(num(op.retract, 0.5), d));
+      em.feed(x, zTop - next, op.feed);
+      em.rapid(x, zSafe);
       d = next;
     }
   };
@@ -344,9 +371,10 @@
     const clearX = num(settings.clearX, 1), clearZ = num(settings.clearZ, 1);
     const start = { x: num(settings.startDia, stock.diameter + 2 * clearX) / 2, z: num(settings.startZ, num(stock.zFront, 0) + clearZ) };
     const bb = poly.length ? Geom.bbox(poly) : { zmin: -10, zmax: 0 };
-    const zHigh = Math.max(num(stock.zFront, 0), bb.zmax) + clearZ + 5;
+    const zMaterial = Math.max(num(stock.zFront, 0), bb.zmax);
+    const zHigh = zMaterial + clearZ + 5;
     const env = poly.length > 1 ? Geom.envelope(poly, bb.zmin, zHigh, GRID) : null;
-    const ctx = { stock: Object.assign({}, stock, { zFront: num(stock.zFront, 0) }), profile, poly, env, clearX, clearZ, start, controller, settings };
+    const ctx = { stock: Object.assign({}, stock, { zFront: num(stock.zFront, 0) }), profile, poly, env, zMaterial, clearX, clearZ, start, controller, settings };
     const em = new Emitter(ctx);
     em.raw({ g: 92, x: em.dia(start.x), z: em.zz(start.z) });
     if (settings.spindle && controller.spindleOn) em.raw(Object.assign({}, controller.spindleOn));
@@ -359,9 +387,9 @@
       if (em.blocks.length === before) em.blocks.pop();          // operation produced nothing: drop its comment
     }
     em.comment('Return to start');
-    em.retractSafe();
-    em.rapid(em.safeX, start.z);
-    em.rapid(start.x, start.z);
+    // travel() picks the shortest safe way back: straight along Z when the path is in
+    // the air (e.g. a drill on the centreline), otherwise out to the safe radius first.
+    em.travel(start.x, start.z);
     if (settings.spindle && controller.spindleOff) em.raw(Object.assign({}, controller.spindleOff));
     em.raw(Object.assign({}, controller.endBlock));
     const blocks = Emco.number(em.blocks);

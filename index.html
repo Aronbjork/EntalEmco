@@ -175,6 +175,7 @@
     <li>Arcs are G02 (clockwise) / G03 (counter-clockwise) viewed with Z to the right and X up, each followed by an M99 block with the positive I (radial) and K (axial) distances from the arc start to its centre. Arcs are split automatically at quadrant boundaries.</li>
     <li>Mk1/Mk2 controllers have no M-codes: the program ends with G22, pause is G20, tool change G26. Their arcs only allow fixed radii — tick "Arcs as short lines" in the Finish operation.</li>
     <li>Thread (G33) and tool change (M06 / G26) block layouts have not been verified against a real machine. Receive a program from your lathe that uses them and compare before relying on them.</li>
+    <li><b>Drilling without tool offsets:</b> make the drilling its own program. Centre the drill by hand, park it a known distance in front of the part, set Start position X = Ø0 and Z = that distance, and keep "Drill centred by hand" ticked in the operation. The program then moves in Z only.</li>
   </ul>
   <h4>Sending</h4>
   <p>Web Serial works in Chrome and Edge. Connect, pick the COM port of your cable, put the lathe in receive mode (<kbd>G66</kbd> <kbd>INP</kbd> <kbd>INP</kbd>, display "A LO", <kbd>START</kbd>) and click Send. If blocks go missing, raise the delay per line. To check the exact format your machine expects, send a program <i>from</i> the lathe (G66 in output mode) and look at the received text.</p>

@@ -243,7 +243,7 @@
     finish: [['feed', 'Feed', 'mm/min'], ['retract', 'Pull-out step', 'mm'], ['arcsAsLines', 'Arcs as short lines (Mk1/Mk2)', 'bool'], ['arcTol', 'Line tolerance', 'mm']],
     groove: [['z', 'Groove right edge Z', 'mm'], ['width', 'Width', 'mm'], ['dia', 'Bottom diameter', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's'], ['stepFactor', 'Step (fraction of tool width)', '']],
     part: [['z', 'Part end face Z (= −length)', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['finalDia', 'Stop at diameter', 'mm'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's']],
-    drill: [['depth', 'Depth', 'mm'], ['peck', 'Peck depth (0 = none)', 'mm'], ['feed', 'Feed', 'mm/min'], ['zTop', 'Surface Z', 'mm'], ['retract', 'Re-entry gap', 'mm']],
+    drill: [['manual', 'Drill centred by hand (Z moves only)', 'bool'], ['depth', 'Depth', 'mm'], ['peck', 'Peck depth (0 = none)', 'mm'], ['feed', 'Feed', 'mm/min'], ['zTop', 'Surface Z', 'mm'], ['retract', 'Re-entry gap', 'mm']],
     thread: [['dia', 'Major diameter', 'mm'], ['pitch', 'Pitch', 'mm'], ['zStart', 'Start Z (in the air)', 'mm'], ['zEnd', 'End Z', 'mm'], ['depth', 'Total depth (radial)', 'mm'], ['passes', 'Passes', '']],
     tool: [['tool', 'Tool number', ''], ['dx', 'X offset', 'mm'], ['dz', 'Z offset', 'mm'], ['pause', 'Pause before (M00 / G20)', 'bool']],
     custom: [['text', 'Blocks, one per line (e.g. G01 X1200 Z-500 F100)', 'textarea']]
@@ -258,7 +258,7 @@
     face: 'Passes from the front of the material down to End Z, cutting toward the centre.',
     groove: 'Repeated plunges with the grooving tool; width must be at least the tool width.',
     part: 'Single plunge at the part end face. Use a slow feed; 0 stops exactly at the centre.',
-    drill: 'Centre drill / drill mounted in the tool holder at X0, pecking with full retract.'
+    drill: 'With "centred by hand" ticked: centre the drill tip on the axis yourself, park it in front of the part, set Start position X to Ø0 and Z to that parking distance (Setup tab), and the program only moves in Z. Untick it only if the drill shares the turning tool\'s X zero (e.g. after a Tool change with offsets). Pecks retract fully each time.'
   };
   /** Rebuild the operation list and the form of the selected operation. */
   function renderOps() {
