@@ -21,7 +21,12 @@
 
   /** A fresh, empty project with sensible defaults for Ø25 stock. */
   function defaultProject() {
-    return { name: 'New part', stock: { diameter: 25, length: 50, zFront: 0 }, settings: { controller: 'MK4', clearX: 1, clearZ: 1, startDia: 27, startZ: 1, spindle: true }, profile: [], ops: [], dxfText: null, dxfMapping: null };
+    return { name: 'New part', stock: { diameter: 25, length: 50, zFront: 0 }, settings: { controller: 'MK4', clearX: 1, clearZ: 1, startDia: 27, startZ: 1, spindle: true }, cutting: { material: 'alu', tool: 'carbide', rpm: null }, profile: [], ops: [], dxfText: null, dxfMapping: null };
+  }
+  /** Current cutting data (feeds etc.) derived from the project's material, tool, spindle speed and stock. */
+  function cuttingNow(drillDia) {
+    const p = state.project; if (!p.cutting) p.cutting = { material: 'alu', tool: 'carbide', rpm: null };
+    return CAM.cuttingData(p.cutting, p.stock.diameter, drillDia);
   }
   /** Serial defaults = Mike's Free Interface settings (300 baud, 8N1, no handshake). */
   const defaultSerial = { baud: 300, dataBits: 8, stopBits: 1, parity: 'none', flow: 'none', eol: 'crlf', lineDelay: 50, charDelay: 0, dtr: true, rts: true, header: true, trailer: true };
@@ -159,15 +164,42 @@
     $('stockDia').value = p.stock.diameter; $('stockLen').value = p.stock.length; $('stockFront').value = p.stock.zFront;
     $('controller').value = p.settings.controller; $('clearX').value = p.settings.clearX; $('clearZ').value = p.settings.clearZ;
     $('startDia').value = p.settings.startDia; $('startZ').value = p.settings.startZ; $('spindle').checked = !!p.settings.spindle;
+    renderCutting();
+  }
+  /** Cutting-data section of the Setup tab: material / tool / rpm inputs and the table of resulting values. */
+  function renderCutting() {
+    const p = state.project; const cut = p.cutting || { material: 'alu', tool: 'carbide', rpm: null };
+    const sel = $('cutMaterial');
+    if (!sel.options.length) for (const k in CAM.MATERIALS) { const o = document.createElement('option'); o.value = k; o.textContent = CAM.MATERIALS[k].label; sel.appendChild(o); }
+    sel.value = cut.material in CAM.MATERIALS ? cut.material : 'alu'; $('cutTool').value = cut.tool === 'hss' ? 'hss' : 'carbide'; $('cutRpm').value = cut.rpm > 0 ? cut.rpm : '';
+    const cd = cuttingNow();
+    $('cutRpmHint').innerHTML = `Suggested for Ø${fmt(p.stock.diameter, 1)} stock with ${cd.tool === 'hss' ? 'HSS' : 'carbide'} (${cd.vc} m/min): <b>${cd.rpmSuggested} rpm</b>. The lathe runs 50–3200 rpm by belt; enter the speed you actually set so the feeds match.` + (cd.rpm !== cd.rpmSuggested ? ` Using ${cd.rpm} rpm.` : '');
+    const rows = [
+      ['Rough turning', `${cd.doc} mm deep, F${cd.feedRough} (${cd.fRough} mm/rev), allowance ${cd.allowX} mm`],
+      ['Finish contour', `F${cd.feedFinish} (${cd.fFinish} mm/rev)`],
+      ['Facing', `F${cd.feedFace}, ${Math.max(0.2, cd.doc / 2)} mm per pass`],
+      ['Drilling', `F${cd.feedDrill} (${cd.fDrill} mm/rev), peck ${cd.peckFactor} × drill Ø`],
+      ['Groove / parting', `F${cd.feedGroove} / F${cd.feedPart}`]
+    ];
+    $('cutTable').innerHTML = rows.map(r => `<tr><td class="muted" style="white-space:normal">${r[0]}</td><td style="white-space:normal">${r[1]}</td></tr>`).join('');
+    $('cutNotes').textContent = cd.notes;
   }
   /** Event handlers for the Setup tab. */
   function bindSetup() {
     $('projName').addEventListener('change', () => { state.project.name = $('projName').value; commit(false); });
     const map = { stockDia: ['stock', 'diameter'], stockLen: ['stock', 'length'], stockFront: ['stock', 'zFront'], clearX: ['settings', 'clearX'], clearZ: ['settings', 'clearZ'], startDia: ['settings', 'startDia'], startZ: ['settings', 'startZ'] };
-    for (const id in map) $(id).addEventListener('change', () => { const [o, k] = map[id]; const v = parseFloat($(id).value); if (!isNaN(v)) { state.project[o][k] = v; commit(true); } });
+    for (const id in map) $(id).addEventListener('change', () => { const [o, k] = map[id]; const v = parseFloat($(id).value); if (!isNaN(v)) { state.project[o][k] = v; commit(true); if (id === 'stockDia') renderCutting(); } });
     $('controller').addEventListener('change', () => { state.project.settings.controller = $('controller').value; commit(true); });
     $('spindle').addEventListener('change', () => { state.project.settings.spindle = $('spindle').checked; commit(true); });
-    $('btnQuickOps').addEventListener('click', () => { state.project.ops.push(CAM.newOp('rough'), CAM.newOp('finish')); commit(true); showTab('ops'); toast('Added Rough turning + Finish contour'); });
+    $('btnQuickOps').addEventListener('click', () => { const cd = cuttingNow(); state.project.ops.push(CAM.newOp('rough', cd), CAM.newOp('finish', cd)); commit(true); showTab('ops'); toast('Added Rough turning + Finish contour'); });
+    // cutting data
+    const cutChanged = () => { const c = state.project.cutting || (state.project.cutting = {}); c.material = $('cutMaterial').value; c.tool = $('cutTool').value; const r = parseFloat($('cutRpm').value); c.rpm = r > 0 ? r : null; renderCutting(); clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 400); };
+    ['cutMaterial', 'cutTool', 'cutRpm'].forEach(id => $(id).addEventListener('change', cutChanged));
+    $('btnApplyCut').addEventListener('click', () => {
+      const ops = state.project.ops; if (!ops.length) { toast('No operations yet — new ones will use these values'); return; }
+      if (!confirm('Overwrite the feeds, depth of cut, allowance and peck of all ' + ops.length + ' operation(s) with the cutting data?')) return;
+      pushUndo(); for (const op of ops) CAM.applyCutting(op, cuttingNow(op.dia)); commit(false); toast('Cutting data applied');
+    });
   }
 
   /** Rebuild the point table of the Profile tab. One row per point; the "→ next" column edits the segment to the following point. */
@@ -243,7 +275,7 @@
     finish: [['feed', 'Feed', 'mm/min'], ['retract', 'Pull-out step', 'mm'], ['arcsAsLines', 'Arcs as short lines (Mk1/Mk2)', 'bool'], ['arcTol', 'Line tolerance', 'mm']],
     groove: [['z', 'Groove right edge Z', 'mm'], ['width', 'Width', 'mm'], ['dia', 'Bottom diameter', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's'], ['stepFactor', 'Step (fraction of tool width)', '']],
     part: [['z', 'Part end face Z (= −length)', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['finalDia', 'Stop at diameter', 'mm'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's']],
-    drill: [['manual', 'Drill centred by hand (Z moves only)', 'bool'], ['depth', 'Depth', 'mm'], ['peck', 'Peck depth (0 = none)', 'mm'], ['feed', 'Feed', 'mm/min'], ['zTop', 'Surface Z', 'mm'], ['retract', 'Re-entry gap', 'mm']],
+    drill: [['manual', 'Drill centred by hand (Z moves only)', 'bool'], ['dia', 'Drill diameter', 'mm'], ['depth', 'Depth', 'mm'], ['peck', 'Peck depth (0 = none)', 'mm'], ['feed', 'Feed', 'mm/min'], ['zTop', 'Surface Z', 'mm'], ['retract', 'Re-entry gap', 'mm']],
     thread: [['dia', 'Major diameter', 'mm'], ['pitch', 'Pitch', 'mm'], ['zStart', 'Start Z (in the air)', 'mm'], ['zEnd', 'End Z', 'mm'], ['depth', 'Total depth (radial)', 'mm'], ['passes', 'Passes', '']],
     tool: [['tool', 'Tool number', ''], ['dx', 'X offset', 'mm'], ['dz', 'Z offset', 'mm'], ['pause', 'Pause before (M00 / G20)', 'bool']],
     custom: [['text', 'Blocks, one per line (e.g. G01 X1200 Z-500 F100)', 'textarea']]
@@ -289,7 +321,7 @@
   }
   /** Event handlers for the Operations tab (add, select, reorder, enable, duplicate, delete, edit parameters). */
   function bindOps() {
-    $('addMenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; const op = CAM.newOp(b.dataset.type); pushUndo(); state.project.ops.push(op); state.selectedOp = op.id; commit(false); });
+    $('addMenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; const op = CAM.newOp(b.dataset.type, cuttingNow()); pushUndo(); state.project.ops.push(op); state.selectedOp = op.id; commit(false); });
     $('opList').addEventListener('click', e => {
       const row = e.target.closest('.op'); if (!row) return;
       const id = row.dataset.id; const ops = state.project.ops; const i = ops.findIndex(o => o.id === id); const act = e.target.dataset.act;
@@ -307,6 +339,7 @@
       if (e.target.type === 'checkbox') op[k] = e.target.checked;
       else if (e.target.type === 'number') op[k] = e.target.value === '' ? null : parseFloat(e.target.value);
       else op[k] = e.target.value;
+      if (op.type === 'drill' && k === 'dia') { op.peck = cuttingNow(op.dia).peck; toast('Peck depth set to ' + op.peck + ' mm for a Ø' + op.dia + ' drill'); }
       rebuild(); renderOps(); renderProgram(); updateStatus(); draw(); clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 400);
     });
   }

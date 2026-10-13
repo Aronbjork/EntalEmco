@@ -45,7 +45,15 @@
       <label class="field"><span class="name">Start position Z <small>mm</small></span><input type="number" id="startZ" step="0.1"></label>
       <label class="field"><span class="name">Spindle M03 / M05 blocks (Mk4)</span><input type="checkbox" id="spindle"></label>
       <p class="hint">The program begins with G92 at the start position, so put the tool tip exactly there before pressing START on the lathe. X is always programmed as a diameter (G92 X2700 = tool tip at Ø27.00).</p>
-      <div class="row"><button id="btnQuickOps" class="small">Quick setup: Rough + Finish</button></div>
+      <h3>Cutting data</h3>
+      <label class="field"><span class="name">Material</span><select id="cutMaterial"></select></label>
+      <label class="field"><span class="name">Tool</span><select id="cutTool"><option value="carbide">Carbide insert</option><option value="hss">HSS, ground</option></select></label>
+      <label class="field"><span class="name">Spindle speed <small>rpm</small></span><input type="number" id="cutRpm" step="10" min="50" max="3200" placeholder="suggested"></label>
+      <p class="hint" id="cutRpmHint"></p>
+      <table class="pts" id="cutTable"></table>
+      <p class="hint" id="cutNotes"></p>
+      <div class="row"><button id="btnApplyCut" class="small">Apply to all operations</button><button id="btnQuickOps" class="small">Quick setup: Rough + Finish</button></div>
+      <p class="hint">New operations pick these values up automatically; "Apply" also updates the feeds, depth of cut, allowance and peck of the operations you already have.</p>
     </section>
 
     <section class="tabpanel" id="tab-profile">

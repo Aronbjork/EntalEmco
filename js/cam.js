@@ -24,16 +24,101 @@
     finish: { label: 'Finish contour',   icon: '∿', defaults: { feed: 50, retract: 0.7, arcsAsLines: false, arcTol: 0.01 } },
     groove: { label: 'Groove',           icon: '⊔', defaults: { z: -10, width: 3, dia: 10, toolWidth: 2, toolRef: 'right', feed: 30, dwell: 0, stepFactor: 0.75 } },
     part:   { label: 'Parting off',      icon: '⟂', defaults: { z: -40, toolWidth: 2, toolRef: 'right', finalDia: 0, feed: 25, dwell: 0 } },
-    drill:  { label: 'Centre drilling',  icon: '⌀', defaults: { depth: 10, peck: 3, feed: 40, zTop: 0, retract: 0.5, manual: true } },
+    drill:  { label: 'Centre drilling',  icon: '⌀', defaults: { dia: 3, depth: 10, peck: 3, feed: 40, zTop: 0, retract: 0.5, manual: true } },
     thread: { label: 'Thread (G33)',     icon: '⌇', defaults: { dia: 10, pitch: 1.0, zStart: 2, zEnd: -15, depth: 0.61, passes: 6 } },
     tool:   { label: 'Tool change',      icon: '⚒', defaults: { tool: 1, dx: 0, dz: 0, pause: true } },
     custom: { label: 'Custom blocks',    icon: '✎', defaults: { text: 'G00 X2700 Z100' } }
   };
 
-  /** Create a new operation object of the given type with default parameters and a unique id. */
-  function newOp(type) {
+  /**
+   * Create a new operation object of the given type with default parameters and a
+   * unique id. When cutting data `cd` (from cuttingData()) is given, feeds, depth of
+   * cut, allowance and peck are taken from it instead of the generic defaults.
+   */
+  function newOp(type, cd) {
     const d = OP_DEFS[type];
-    return Object.assign({ id: 'op' + Math.random().toString(36).slice(2, 8), type, name: d.label, enabled: true }, JSON.parse(JSON.stringify(d.defaults)));
+    const op = Object.assign({ id: 'op' + Math.random().toString(36).slice(2, 8), type, name: d.label, enabled: true }, JSON.parse(JSON.stringify(d.defaults)));
+    if (cd) applyCutting(op, cd);
+    return op;
+  }
+
+  /* ---------- cutting data ----------
+   * Starting values for a 440 W bench lathe (Compact 5: 50–3200 rpm by belt, feed in
+   * mm/min, rapid about 700 mm/min). They are deliberately on the gentle side; raise
+   * them once the machine and tooling are known to cope. Feeds are per revolution and
+   * get multiplied by the spindle speed; vc is the surface speed in m/min.
+   *   fRough/fFinish  turning feed (mm/rev)        doc      radial depth of cut (mm)
+   *   allowX          finish allowance (mm)        fDrill   drill feed (mm/rev)
+   *   peck            peck depth as a multiple of the drill diameter
+   *   fGroove/fPart   plunge feeds (mm/rev)
+   */
+  const MATERIALS = {
+    alu:       { label: 'Aluminium alloy (6082 / 6061 / 2007)', vc: { hss: 120, carbide: 250 }, fRough: 0.07, fFinish: 0.03, doc: 1.0, allowX: 0.3, fDrill: 0.04, peck: 1.0, fGroove: 0.035, fPart: 0.025,
+      notes: 'A sharp, polished edge and a drop of WD-40 or paraffin stop the chip welding to the tool. Emco\'s own chess-set programs ran 1 mm cuts at F150 with 2300 rpm in aluminium.' },
+    aluSoft:   { label: 'Aluminium, soft / pure (1050 / 1100)', vc: { hss: 100, carbide: 200 }, fRough: 0.06, fFinish: 0.03, doc: 0.8, allowX: 0.3, fDrill: 0.05, peck: 0.75, fGroove: 0.03, fPart: 0.025,
+      notes: 'Gummy: keep the tool very sharp, use lubricant, and avoid dwelling at the bottom of grooves.' },
+    brass:     { label: 'Brass (CuZn39Pb3 / 360)', vc: { hss: 90, carbide: 200 }, fRough: 0.08, fFinish: 0.04, doc: 1.0, allowX: 0.25, fDrill: 0.05, peck: 1.0, fGroove: 0.04, fPart: 0.03,
+      notes: 'Zero or slightly negative rake stops the tool grabbing. Drills grab too, so keep pecking and dull the drill\'s cutting edges slightly.' },
+    freeSteel: { label: 'Free-cutting steel (11SMn30 / 12L14)', vc: { hss: 35, carbide: 120 }, fRough: 0.06, fFinish: 0.03, doc: 0.5, allowX: 0.2, fDrill: 0.04, peck: 0.5, fGroove: 0.025, fPart: 0.02,
+      notes: 'Cutting oil helps. Keep the finish feed at 0.03 mm/rev or more; slower only rubs and glazes the surface.' },
+    mildSteel: { label: 'Mild steel (S235 / 1018)', vc: { hss: 25, carbide: 100 }, fRough: 0.05, fFinish: 0.025, doc: 0.4, allowX: 0.2, fDrill: 0.03, peck: 0.5, fGroove: 0.02, fPart: 0.015,
+      notes: 'The 440 W motor is the limit: take more passes rather than deeper ones, and listen for the motor slowing down.' },
+    stainless: { label: 'Stainless steel (303 / 304)', vc: { hss: 18, carbide: 80 }, fRough: 0.05, fFinish: 0.03, doc: 0.3, allowX: 0.2, fDrill: 0.03, peck: 0.4, fGroove: 0.02, fPart: 0.015,
+      notes: 'Work-hardens: never let the tool rub, keep the feed up and every pass cutting. 303 is fine on this lathe, 304 is marginal.' },
+    pom:       { label: 'POM / Delrin / acetal', vc: { hss: 150, carbide: 300 }, fRough: 0.10, fFinish: 0.05, doc: 1.5, allowX: 0.3, fDrill: 0.08, peck: 1.5, fGroove: 0.05, fPart: 0.04,
+      notes: 'Sharp HSS gives the best finish; no coolant needed. Chips come off in long strings, keep them away from the chuck.' },
+    acrylic:   { label: 'Acrylic / PMMA / polycarbonate', vc: { hss: 100, carbide: 200 }, fRough: 0.06, fFinish: 0.03, doc: 0.8, allowX: 0.3, fDrill: 0.05, peck: 1.0, fGroove: 0.03, fPart: 0.025,
+      notes: 'Melts when the chip cannot escape: peck drilling and an air blast help. A slow finish feed gives a clear surface.' },
+    nylon:     { label: 'Nylon / PA6', vc: { hss: 120, carbide: 250 }, fRough: 0.10, fFinish: 0.05, doc: 1.0, allowX: 0.3, fDrill: 0.08, peck: 1.0, fGroove: 0.04, fPart: 0.03,
+      notes: 'Very sharp tool; nylon pushes away from a dull edge and springs back. A light spring pass improves the diameter.' }
+  };
+  const RPM_MIN = 50, RPM_MAX = 3200, FEED_MIN = 2, FEED_MAX = 400;
+
+  /** Spindle speed (rpm) for a surface speed vc (m/min) on diameter D (mm), clamped to the lathe's range. */
+  function suggestRpm(vc, D) {
+    if (!(D > 0)) return RPM_MAX;
+    return Math.round(Math.min(RPM_MAX, Math.max(RPM_MIN, vc * 1000 / (Math.PI * D))) / 10) * 10;
+  }
+  /** mm/rev × rpm → mm/min, clamped to what the Compact 5 accepts and rounded to a tidy value. */
+  function feedMmMin(fRev, rpm) {
+    const f = fRev * rpm;
+    const r = f >= 60 ? Math.round(f / 10) * 10 : f >= 20 ? Math.round(f / 5) * 5 : Math.round(f);
+    return Math.min(FEED_MAX, Math.max(FEED_MIN, r));
+  }
+  /**
+   * Compute concrete parameters for the project's cutting setup.
+   *   cut = { material, tool: 'hss'|'carbide', rpm (null = use the suggested speed) }
+   *   stockDia = stock diameter for the rpm suggestion, drillDia for the peck depth.
+   */
+  function cuttingData(cut, stockDia, drillDia) {
+    cut = cut || {};
+    const m = MATERIALS[cut.material] || MATERIALS.alu;
+    const tool = cut.tool === 'hss' ? 'hss' : 'carbide';
+    const vc = m.vc[tool];
+    const rpmSuggested = suggestRpm(vc, stockDia);
+    const rpm = cut.rpm > 0 ? cut.rpm : rpmSuggested;
+    const dd = drillDia > 0 ? drillDia : 3;
+    return {
+      material: cut.material in MATERIALS ? cut.material : 'alu', label: m.label, tool, vc, rpmSuggested, rpm,
+      doc: m.doc, allowX: m.allowX, allowZ: Math.min(0.1, m.allowX / 2),
+      feedRough: feedMmMin(m.fRough, rpm), feedFinish: feedMmMin(m.fFinish, rpm), feedFace: feedMmMin(m.fRough * 0.8, rpm),
+      feedDrill: feedMmMin(m.fDrill, rpm), peck: Math.round(m.peck * dd * 10) / 10, peckFactor: m.peck,
+      feedGroove: feedMmMin(m.fGroove, rpm), feedPart: feedMmMin(m.fPart, rpm),
+      fRough: m.fRough, fFinish: m.fFinish, fDrill: m.fDrill, fGroove: m.fGroove, fPart: m.fPart, notes: m.notes
+    };
+  }
+  /** Write the cutting data into an operation (feeds, depth of cut, allowance, peck); geometry is left alone. */
+  function applyCutting(op, cd) {
+    switch (op.type) {
+      case 'face': op.feed = cd.feedFace; op.doc = Math.max(0.2, cd.doc / 2); break;
+      case 'rough': op.feed = cd.feedRough; op.doc = cd.doc; op.allowX = cd.allowX; op.allowZ = cd.allowZ; break;
+      case 'finish': op.feed = cd.feedFinish; break;
+      case 'groove': op.feed = cd.feedGroove; break;
+      case 'part': op.feed = cd.feedPart; break;
+      case 'drill': op.feed = cd.feedDrill; op.peck = Math.round(cd.peckFactor * (op.dia > 0 ? op.dia : 3) * 10) / 10; break;
+      default: break;
+    }
+    return op;
   }
 
   /* ---------- emitter ---------- */
@@ -396,5 +481,5 @@
     return { blocks, warnings: warnings.concat(em.warnings, Emco.checkProgram(blocks, settings.controller)) };
   }
 
-  global.CAM = { OP_DEFS, newOp, buildProgram, GRID };
+  global.CAM = { OP_DEFS, MATERIALS, newOp, applyCutting, cuttingData, suggestRpm, buildProgram, GRID };
 })(typeof window !== 'undefined' ? window : globalThis);
