@@ -79,9 +79,10 @@ table.pts td { padding: 2px 3px; border-bottom: 1px solid var(--border); white-s
 table.pts td.segcell { white-space: normal; }
 table.pts td.segcell .arcctl { display: flex; gap: 3px; align-items: center; margin-top: 2px; }
 table.pts tr.sel td { background: var(--accent-soft); }
-table.pts input[type="number"] { width: 58px; padding: 2px 4px; }
-table.pts select { padding: 2px 3px; }
-table.pts td:last-child { white-space: nowrap; }
+table.pts input[type="number"] { width: 54px; padding: 2px 3px; }
+table.pts select { padding: 2px 2px; }
+table.pts td:last-child { white-space: nowrap; padding-right: 0; }
+table.pts td:last-child button { padding: 2px 5px; }
 table.pts .idx { color: var(--muted); width: 22px; cursor: pointer; }
 
 /* ops list */
