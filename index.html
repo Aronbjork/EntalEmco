@@ -3,17 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compact 5 CAM</title>
+<title>EntalEmco</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="dot"></span>Compact 5 CAM</div>
+  <div class="brand"><span class="dot"></span><div><span class="name">EntalEmco</span><small>Compact 5 CAM</small></div></div>
   <input id="projName" type="text" placeholder="Project name" title="Project name">
   <button id="btnNew">New</button>
   <button id="btnOpen">Open project…</button>
   <button id="btnSave">Save project</button>
   <button id="btnImportDxf">Import DXF…</button>
+  <button id="btnImport3d">Import 3D…</button>
   <button id="btnOpenCnc">Open .CNC…</button>
   <button id="btnExport">Export .CNC</button>
   <div class="spacer"></div>
@@ -27,6 +30,7 @@
     <nav class="tabs">
       <button data-tab="setup" class="active">Setup</button>
       <button data-tab="profile">Profile</button>
+      <button data-tab="tools">Tools</button>
       <button data-tab="ops">Operations</button>
       <button data-tab="program">Program</button>
     </nav>
@@ -39,11 +43,13 @@
       <p class="hint">Z0 is the finished face of the part. "Material in front" is extra stock that a Facing operation removes; leave it 0 if you zero Z on the end of the bar.</p>
       <h3>Machine</h3>
       <label class="field"><span class="name">Controller</span><select id="controller"><option value="MK4">Compact 5 CNC Mk3 / Mk4</option><option value="MK2">Compact 5 CNC Mk1 / Mk2</option></select></label>
+      <label class="field"><span class="name">Tool changer</span><select id="changer"><option value="manual">By hand (pause)</option><option value="turret">Automatic turret (6 stations)</option></select></label>
       <label class="field"><span class="name">Clearance X (radial) <small>mm</small></span><input type="number" id="clearX" step="0.1" min="0"></label>
       <label class="field"><span class="name">Clearance Z <small>mm</small></span><input type="number" id="clearZ" step="0.1" min="0"></label>
       <label class="field"><span class="name">Start position X <small>Ø mm</small></span><input type="number" id="startDia" step="0.1"></label>
       <label class="field"><span class="name">Start position Z <small>mm</small></span><input type="number" id="startZ" step="0.1"></label>
       <label class="field"><span class="name">Spindle M03 / M05 blocks (Mk4)</span><input type="checkbox" id="spindle"></label>
+      <p class="hint">Leave this unticked if your lathe cannot start or stop its motor by program (the Compact 5 spindle is switched by hand). No M03 / M05 is written then.</p>
       <p class="hint">The program begins with G92 at the start position, so put the tool tip exactly there before pressing START on the lathe. X is always programmed as a diameter (G92 X2700 = tool tip at Ø27.00).</p>
       <h3>Cutting data</h3>
       <label class="field"><span class="name">Material</span><select id="cutMaterial"></select></label>
@@ -76,6 +82,16 @@
         <tbody id="ptsBody"></tbody>
       </table>
       <div class="row" style="margin-top:6px"><button id="btnAddPoint" class="small">+ Add point at end</button></div>
+    </section>
+
+    <section class="tabpanel" id="tab-tools">
+      <div class="row"><button id="btnAddTool" class="small">+ Add tool</button><button id="btnToolsDefault" class="small">Load starter set</button><span class="grow"></span><span class="muted" id="toolCount"></span></div>
+      <p class="hint">Operations use the first tool of the kind they need (or the tool you pick in the operation). When two consecutive operations use different tools, the program stops the spindle, pauses so you can swap the tool, and writes the offset block.</p>
+      <table class="pts">
+        <thead><tr><th>T</th><th>Name</th><th>Type</th><th title="Width of a grooving / parting tool, diameter of a drill">Size</th><th title="X offset from the first tool (mm)">X</th><th title="Z offset from the first tool (mm)">Z</th><th></th></tr></thead>
+        <tbody id="toolBody"></tbody>
+      </table>
+      <p class="hint"><b>Size</b> is the width of a grooving or parting tool, or the diameter of a drill. <b>X / Z</b> are how far the tool tip sits from the tool the program starts with (touch both tools to the same point and note the difference). Empty library = no tool changes. With the <b>automatic turret</b> (Setup tab) T is the station number 1–6: three stations hold radial tools, three hold drills.</p>
     </section>
 
     <section class="tabpanel" id="tab-ops">
@@ -122,7 +138,7 @@
         <label class="field"><span class="name">Send header line</span><input type="checkbox" id="serHeader"></label>
         <label class="field"><span class="name">Send closing "M" line</span><input type="checkbox" id="serTrailer"></label>
       </div>
-      <p class="hint">Defaults match Mike's Free Interface: 300 baud, 8 data bits, 1 stop bit, no parity, no handshake.<br><b>On the lathe:</b> CNC mode, enter <kbd>G66</kbd> <kbd>INP</kbd> <kbd>INP</kbd> (display shows "A LO"), press <kbd>START</kbd>, then click <b>Send program</b> here. Anything the lathe sends back (G66 in send mode) appears below.</p>
+      <p class="hint"><b>On the lathe:</b> CNC mode, enter <kbd>G66</kbd> <kbd>INP</kbd> <kbd>INP</kbd> (display shows "A LO"), press <kbd>START</kbd>, then click <b>Send program</b> here. Anything the lathe sends back (G66 in send mode) appears below.</p>
       <div class="row"><span class="muted">Received from lathe</span><span class="grow"></span><button id="btnUseReceived" class="small">Use as program</button><button id="btnClearLog" class="small">Clear</button></div>
       <pre class="log" id="serialLog"></pre>
     </section>
@@ -144,7 +160,7 @@
       <button id="btnPlay" class="small" title="Play / pause the simulation (Space)">▶ Simulate</button>
       <input type="range" id="simRange" min="0" max="1000" value="1000" title="Scrub through the toolpath">
       <select id="simSpeed" title="Playback speed relative to real machining time"><option value="1">1×</option><option value="5">5×</option><option value="20" selected>20×</option><option value="100">100×</option></select>
-      <span id="simInfo" class="muted" style="font-size:12px"></span>
+      <span id="simInfo" class="muted" style="font-size:13.5px"></span>
     </div>
     <canvas id="cv"></canvas>
     <div class="statusbar"><span>Z <b id="stZ">–</b></span><span>X <b id="stX">–</b></span><span>Ø <b id="stD">–</b></span><span id="stHint" class="grow"></span><span id="stBlocks"></span></div>
@@ -168,8 +184,23 @@
   <div class="dlgbtns"><button id="dxfAuto">Auto-detect</button><button id="dxfCancel">Cancel</button><button id="dxfOk" class="primary">Use as profile</button></div>
 </dialog>
 
+<dialog id="dlgMesh">
+  <h2>Import 3D model (STL / OBJ)</h2>
+  <div class="dxfgrid">
+    <label class="field"><span class="name">Turning axis</span><select id="m3Axis"><option value="auto">Auto-detect</option><option value="x">Model X</option><option value="y">Model Y</option><option value="z">Model Z</option></select></label>
+    <label class="field"><span class="name">Face (Z = 0) at</span><select id="m3Face"><option value="auto">Auto (smaller end)</option><option value="min">Low end of axis</option><option value="max">High end of axis</option></select></label>
+    <label class="field"><span class="name">Model units</span><select id="m3Scale"><option value="1">Millimetres</option><option value="25.4">Inches</option><option value="10">Centimetres</option><option value="1000">Metres</option></select></label>
+    <label class="field"><span class="name">Fit tolerance <small>mm</small></span><input type="number" id="m3Tol" step="0.005" min="0.005" value="0.03"></label>
+    <label class="field"><span class="name">Create operations</span><input type="checkbox" id="m3Ops" checked></label>
+    <label class="field"><span class="name">Drill a centre hole if found</span><input type="checkbox" id="m3Drill" checked></label>
+  </div>
+  <canvas id="m3Preview" style="width:100%;height:260px;border:1px solid var(--border);border-radius:var(--radius);background:var(--canvas-bg);margin:10px 0"></canvas>
+  <div id="m3Info" class="hint"></div>
+  <div class="dlgbtns"><button id="m3Cancel">Cancel</button><button id="m3Ok" class="primary">Use as profile</button></div>
+</dialog>
+
 <dialog id="dlgHelp" class="help">
-  <h2>Compact 5 CAM — quick guide</h2>
+  <h2>EntalEmco — quick guide</h2>
   <h4>Workflow</h4>
   <ol class="steps">
     <li><b>Setup:</b> stock diameter, controller type, clearances and the tool start position (where you park the tool before START).</li>
@@ -193,12 +224,14 @@
 </dialog>
 
 <input type="file" id="fileDxf" accept=".dxf,.DXF" hidden>
+<input type="file" id="file3d" accept=".stl,.STL,.obj,.OBJ" hidden>
 <input type="file" id="fileCnc" accept=".cnc,.CNC,.txt,.nc" hidden>
 <input type="file" id="fileProj" accept=".json" hidden>
 <div class="toast" id="toast"></div>
 
 <script src="js/geom.js"></script>
 <script src="js/dxf.js"></script>
+<script src="js/mesh.js"></script>
 <script src="js/emco.js"></script>
 <script src="js/cam.js"></script>
 <script src="js/serial.js"></script>

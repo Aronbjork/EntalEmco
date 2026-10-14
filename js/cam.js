@@ -121,6 +121,48 @@
     return op;
   }
 
+  /* ---------- tool library ----------
+   * A tool is { id, number, name, type, size, dx, dz }: `number` is the T value written
+   * to the tool-change block, `size` the width of a grooving / parting tool or the
+   * diameter of a drill (mm), dx / dz the offsets of its tip from the tool that is
+   * mounted when the program starts (mm). Every operation either names a tool
+   * (op.toolId) or gets the first library tool of the kind it needs.
+   */
+  const TOOL_TYPES = { turn: 'Turning', groove: 'Grooving', part: 'Parting', drill: 'Drill', thread: 'Threading' };
+  const OP_TOOL_TYPE = { face: 'turn', rough: 'turn', finish: 'turn', groove: 'groove', part: 'part', drill: 'drill', thread: 'thread' };
+  /** A new library tool of the given type with a unique id. */
+  function newTool(type, number, size) {
+    type = type in TOOL_TYPES ? type : 'turn';
+    return { id: 'tl' + Math.random().toString(36).slice(2, 8), number: number || 1, name: TOOL_TYPES[type] + (size ? ' ' + size + ' mm' : ''), type, size: size || 0, dx: 0, dz: 0 };
+  }
+  /** The starter set for a new project. */
+  function defaultTools() { return [newTool('turn', 1, 0), newTool('groove', 2, 2), newTool('part', 3, 2), newTool('drill', 4, 3)]; }
+  /** The library tool an operation runs with, or null (no tool change is made for it). */
+  function toolForOp(op, tools) {
+    if (!tools || !tools.length) return null;
+    const named = op.toolId && tools.find(t => t.id === op.toolId); if (named) return named;
+    const type = OP_TOOL_TYPE[op.type];
+    return type ? tools.find(t => t.type === type) || null : null;
+  }
+  /**
+   * Tool change: retract to the safe radius at the start Z. With the hand-changed
+   * toolpost the spindle is stopped and the program pauses (M00 / G20) so the tool can
+   * be swapped; with the automatic turret (settings.changer === 'turret') there is
+   * nothing to wait for. Then the offset block (M06 on Mk4, G26 on Mk2) is written with
+   * the station number and the offsets relative to the tool the program started with,
+   * and the spindle is restarted if it was stopped.
+   */
+  function emitToolChange(em, ctx, tool, ref) {
+    const c = ctx.controller, turret = ctx.settings.changer === 'turret', spin = ctx.settings.spindle && !turret;
+    em.retractSafe();
+    em.rapid(em.safeX, ctx.start.z);
+    if (spin && c.spindleOff) em.raw(Object.assign({}, c.spindleOff));
+    if (!turret) em.raw(Object.assign({}, c.pause));
+    const dx = Math.round(((tool.dx || 0) - (ref.dx || 0)) * 100), dz = Math.round(((tool.dz || 0) - (ref.dz || 0)) * 100), t = Math.round(num(tool.number, 1));
+    em.raw(c.toolChange === 'M06' ? { m: 6, x: dx, z: dz, t } : { g: 26, x: dx, z: dz, t });
+    if (spin && c.spindleOn) em.raw(Object.assign({}, c.spindleOn));
+  }
+
   /* ---------- emitter ---------- */
 
   /**
@@ -337,12 +379,13 @@
 
   /**
    * PARTING OFF: one plunge that separates the part. op.z is the finished end face of
-   * the part, so with the tool's right edge programmed the plunge is shifted by the
-   * tool width to keep the part at full length. finalDia 0 cuts to the centre.
+   * the part. The slot lies behind it (toward the chuck, −Z): with the tool's right
+   * (+Z) edge programmed the plunge is at op.z, with the left (−Z) edge it is shifted
+   * by the tool width, so the part keeps its full length. finalDia 0 cuts to the centre.
    */
   GEN.part = (em, op, ctx) => {
     const R0 = ctx.stock.diameter / 2, clearX = ctx.clearX;
-    const z = op.toolRef === 'left' ? num(op.z, 0) : num(op.z, 0) + num(op.toolWidth, 2);
+    const z = op.toolRef === 'left' ? num(op.z, 0) - num(op.toolWidth, 2) : num(op.z, 0);
     em.retractSafe();
     em.rapid(R0 + clearX, z);
     em.feed(Math.max(0, num(op.finalDia, 0)) / 2, z, op.feed);
@@ -463,13 +506,34 @@
     const em = new Emitter(ctx);
     em.raw({ g: 92, x: em.dia(start.x), z: em.zz(start.z) });
     if (settings.spindle && controller.spindleOn) em.raw(Object.assign({}, controller.spindleOn));
-    for (const op of project.ops || []) {
-      if (!op.enabled) continue;
-      const gen = GEN[op.type]; if (!gen) continue;
+    const tools = Array.isArray(project.tools) ? project.tools : [];
+    let curTool = null, firstTool = null, changes = 0;
+    for (const op0 of project.ops || []) {
+      if (!op0.enabled) continue;
+      const gen = GEN[op0.type]; if (!gen) continue;
+      let op = op0;
+      const tool = toolForOp(op0, tools);
+      if (tool) {
+        if (!curTool) curTool = firstTool = tool;
+        else if (tool.id !== curTool.id) {
+          em.comment('Tool change: T' + tool.number + ' ' + tool.name);
+          emitToolChange(em, ctx, tool, firstTool); curTool = tool; changes++;
+          // the drill's X zero follows the tool offsets now, so it no longer has to be centred by hand
+          if (tool.type === 'drill') op = Object.assign({}, op0, { manual: false });
+        }
+      }
       em.comment(op.name || OP_DEFS[op.type].label);
       const before = em.blocks.length;
       try { gen(em, op, ctx); } catch (e) { em.warnings.push((op.name || op.type) + ': ' + e.message); }
       if (em.blocks.length === before) em.blocks.pop();          // operation produced nothing: drop its comment
+    }
+    if (changes && settings.changer === 'turret') {
+      const used = [...new Set((project.ops || []).filter(o => o.enabled).map(o => toolForOp(o, tools)).filter(Boolean))];
+      em.warnings.unshift('Turret: the program starts with station ' + firstTool.number + ' "' + firstTool.name + '" in working position; index the turret to it before START. Tool changes are automatic (' + changes + ' in this program). The M06 / G26 block layout is unverified on your machine.');
+      for (const t of used) if (!(t.number >= 1 && t.number <= 6)) em.warnings.push('Tool "' + t.name + '" is T' + t.number + ' but the turret has stations 1–6.');
+      const seen = {}; for (const t of used) { if (seen[t.number]) em.warnings.push('T' + t.number + ' is used by two different tools ("' + seen[t.number] + '" and "' + t.name + '").'); seen[t.number] = t.name; }
+    } else if (changes) {
+      em.warnings.unshift('Tool changes: mount T' + firstTool.number + ' "' + firstTool.name + '" before pressing START. At each change the program ' + (settings.spindle ? 'stops the spindle and ' : '') + 'pauses (M00 / G20): ' + (settings.spindle ? '' : 'switch the spindle off by hand, ') + 'swap the tool, ' + (settings.spindle ? '' : 'switch the spindle on again, ') + 'then press START. Offsets are measured from T' + firstTool.number + '. The M06 / G26 offset block layout is unverified on your machine.');
     }
     em.comment('Return to start');
     // travel() picks the shortest safe way back: straight along Z when the path is in
@@ -481,5 +545,5 @@
     return { blocks, warnings: warnings.concat(em.warnings, Emco.checkProgram(blocks, settings.controller)) };
   }
 
-  global.CAM = { OP_DEFS, MATERIALS, newOp, applyCutting, cuttingData, suggestRpm, buildProgram, GRID };
+  global.CAM = { OP_DEFS, MATERIALS, TOOL_TYPES, OP_TOOL_TYPE, newTool, defaultTools, toolForOp, newOp, applyCutting, cuttingData, suggestRpm, buildProgram, GRID };
 })(typeof window !== 'undefined' ? window : globalThis);

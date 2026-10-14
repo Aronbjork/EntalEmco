@@ -16,12 +16,17 @@
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
-  const LS_PROJECT = 'c5cam.project', LS_SERIAL = 'c5cam.serial', LS_UI = 'c5cam.ui';
+  const LS_PROJECT = 'c5cam.project', LS_SERIAL = 'c5cam.serial', LS_UI = 'c5cam.ui', LS_TOOLS = 'c5cam.tools';
   const RAPID_MM_PER_MIN = 700;        // assumed rapid traverse speed for the time estimate / simulation
 
+  /** The tool library new projects start with: the one last edited, else the starter set. */
+  function libraryTools() {
+    try { const t = JSON.parse(localStorage.getItem(LS_TOOLS)); if (Array.isArray(t)) return t; } catch (e) { /* none saved */ }
+    return CAM.defaultTools();
+  }
   /** A fresh, empty project with sensible defaults for Ø25 stock. */
   function defaultProject() {
-    return { name: 'New part', stock: { diameter: 25, length: 50, zFront: 0 }, settings: { controller: 'MK4', clearX: 1, clearZ: 1, startDia: 27, startZ: 1, spindle: true }, cutting: { material: 'alu', tool: 'carbide', rpm: null }, profile: [], ops: [], dxfText: null, dxfMapping: null };
+    return { name: 'New part', stock: { diameter: 25, length: 50, zFront: 0 }, settings: { controller: 'MK4', clearX: 1, clearZ: 1, startDia: 27, startZ: 1, spindle: false }, cutting: { material: 'alu', tool: 'carbide', rpm: null }, profile: [], ops: [], tools: libraryTools(), dxfText: null, dxfMapping: null };
   }
   /** Current cutting data (feeds etc.) derived from the project's material, tool, spindle speed and stock. */
   function cuttingNow(drillDia) {
@@ -66,7 +71,7 @@
 
   /* ---------- undo / commit ---------- */
   /** The undoable part of the project as a JSON string. */
-  function snapshot() { const p = state.project; return JSON.stringify({ stock: p.stock, settings: p.settings, profile: p.profile, ops: p.ops }); }
+  function snapshot() { const p = state.project; return JSON.stringify({ stock: p.stock, settings: p.settings, profile: p.profile, ops: p.ops, tools: p.tools }); }
   /** Call BEFORE changing the project so the previous state can be restored. */
   function pushUndo() { state.undo.push(snapshot()); if (state.undo.length > 80) state.undo.shift(); state.redo.length = 0; }
   function restore(snap) { const o = JSON.parse(snap); Object.assign(state.project, o); state.selected = Math.min(state.selected, state.project.profile.length - 1); }
@@ -155,14 +160,14 @@
   }
 
   /* ---------- rendering: sidebar ---------- */
-  function renderAll() { renderSetup(); renderProfileTable(); renderOps(); renderProgram(); updateStatus(); draw(); }
+  function renderAll() { renderSetup(); renderProfileTable(); renderTools(); renderOps(); renderProgram(); updateStatus(); draw(); }
 
   /** Write stock and machine settings into the Setup tab inputs. */
   function renderSetup() {
     const p = state.project;
     $('projName').value = p.name;
     $('stockDia').value = p.stock.diameter; $('stockLen').value = p.stock.length; $('stockFront').value = p.stock.zFront;
-    $('controller').value = p.settings.controller; $('clearX').value = p.settings.clearX; $('clearZ').value = p.settings.clearZ;
+    $('controller').value = p.settings.controller; $('changer').value = p.settings.changer === 'turret' ? 'turret' : 'manual'; $('clearX').value = p.settings.clearX; $('clearZ').value = p.settings.clearZ;
     $('startDia').value = p.settings.startDia; $('startZ').value = p.settings.startZ; $('spindle').checked = !!p.settings.spindle;
     renderCutting();
   }
@@ -190,6 +195,7 @@
     const map = { stockDia: ['stock', 'diameter'], stockLen: ['stock', 'length'], stockFront: ['stock', 'zFront'], clearX: ['settings', 'clearX'], clearZ: ['settings', 'clearZ'], startDia: ['settings', 'startDia'], startZ: ['settings', 'startZ'] };
     for (const id in map) $(id).addEventListener('change', () => { const [o, k] = map[id]; const v = parseFloat($(id).value); if (!isNaN(v)) { state.project[o][k] = v; commit(true); if (id === 'stockDia') renderCutting(); } });
     $('controller').addEventListener('change', () => { state.project.settings.controller = $('controller').value; commit(true); });
+    $('changer').addEventListener('change', () => { state.project.settings.changer = $('changer').value; commit(true); });
     $('spindle').addEventListener('change', () => { state.project.settings.spindle = $('spindle').checked; commit(true); });
     $('btnQuickOps').addEventListener('click', () => { const cd = cuttingNow(); state.project.ops.push(CAM.newOp('rough', cd), CAM.newOp('finish', cd)); commit(true); showTab('ops'); toast('Added Rough turning + Finish contour'); });
     // cutting data
@@ -290,7 +296,7 @@
     face: 'Passes from the front of the material down to End Z, cutting toward the centre.',
     groove: 'Repeated plunges with the grooving tool; width must be at least the tool width.',
     part: 'Single plunge at the part end face. Use a slow feed; 0 stops exactly at the centre.',
-    drill: 'With "centred by hand" ticked: centre the drill tip on the axis yourself, park it in front of the part, set Start position X to Ø0 and Z to that parking distance (Setup tab), and the program only moves in Z. Untick it only if the drill shares the turning tool\'s X zero (e.g. after a Tool change with offsets). Pecks retract fully each time.'
+    drill: 'With "centred by hand" ticked: centre the drill tip on the axis yourself, park it in front of the part, set Start position X to Ø0 and Z to that parking distance (Setup tab), and the program only moves in Z. Untick it only if the drill shares the turning tool\'s X zero. When the drill is a library tool that follows another tool, the automatic tool change applies its offsets and the drill is no longer centred by hand. Pecks retract fully each time.'
   };
   /** Rebuild the operation list and the form of the selected operation. */
   function renderOps() {
@@ -299,7 +305,7 @@
     const ops = state.project.ops; const list = $('opList');
     $('opsHint').hidden = ops.length > 0;
     list.innerHTML = ops.map((op, i) => `<div class="op ${op.id === state.selectedOp ? 'sel' : ''} ${op.enabled ? '' : 'off'}" data-id="${op.id}">` +
-      `<input type="checkbox" data-act="en" ${op.enabled ? 'checked' : ''} title="Enable"><span class="ico">${CAM.OP_DEFS[op.type].icon}</span><span class="nm">${esc(op.name)}</span>` +
+      `<input type="checkbox" data-act="en" ${op.enabled ? 'checked' : ''} title="Enable"><span class="ico">${CAM.OP_DEFS[op.type].icon}</span><span class="nm">${esc(op.name)}</span>${opToolBadge(op)}` +
       `<span class="ctl"><button class="small" data-act="up" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button><button class="small" data-act="down" ${i === ops.length - 1 ? 'disabled' : ''} title="Move down">↓</button><button class="small" data-act="dup" title="Duplicate">⧉</button><button class="small" data-act="del" title="Delete">×</button></span></div>`).join('');
     renderOpForm();
   }
@@ -309,6 +315,9 @@
     if (!op) { form.hidden = true; form.innerHTML = ''; return; }
     form.hidden = false;
     let html = `<label class="field"><span class="name">Name</span><input type="text" data-k="name" value="${esc(op.name)}" style="width:200px"></label>`;
+    if (CAM.OP_TOOL_TYPE[op.type] && state.project.tools.length) {
+      html += `<label class="field"><span class="name">Tool</span><select data-k="toolId"><option value="">Automatic (by type)</option>${state.project.tools.map(t => `<option value="${t.id}"${op.toolId === t.id ? ' selected' : ''}>T${t.number} ${esc(t.name)}</option>`).join('')}</select></label>`;
+    }
     for (const [k, label, unit] of FIELDS[op.type]) {
       const v = op[k];
       if (unit === 'bool') html += `<label class="field"><span class="name">${label}</span><input type="checkbox" data-k="${k}" ${v ? 'checked' : ''}></label>`;
@@ -319,6 +328,59 @@
     html += `<p class="hint">${OP_NOTES[op.type] || ''}</p>`;
     form.innerHTML = html;
   }
+  /** " T2" badge for the operation list: the library tool the operation will run with. */
+  function opToolBadge(op) {
+    const t = CAM.toolForOp(op, state.project.tools);
+    return t && op.type !== 'tool' && op.type !== 'custom' ? ` <span class="muted" title="${esc(t.name)}">T${t.number}</span>` : '';
+  }
+  /** Take the tool's width (grooving / parting) or diameter (drill) over into the operation. */
+  function syncOpToTool(op) {
+    const t = CAM.toolForOp(op, state.project.tools); if (!t || !(t.size > 0)) return;
+    if (op.type === 'groove' || op.type === 'part') op.toolWidth = t.size;
+    else if (op.type === 'drill') { op.dia = t.size; op.peck = cuttingNow(t.size).peck; }
+  }
+
+  /* ---------- tool library tab ---------- */
+  /** Persist the library as the starting set for new projects. */
+  function saveLibrary() { try { localStorage.setItem(LS_TOOLS, JSON.stringify(state.project.tools)); } catch (e) { /* storage blocked */ } }
+  /** One table row per library tool. */
+  function renderTools() {
+    const tools = state.project.tools || [];
+    $('toolCount').textContent = tools.length ? tools.length + ' tools' : 'no tools: no tool changes';
+    $('toolBody').innerHTML = tools.map(t => `<tr data-id="${t.id}"><td><input type="number" data-k="number" min="1" step="1" value="${t.number}" style="width:44px"></td>` +
+      `<td><input type="text" data-k="name" value="${esc(t.name)}" style="width:100%;min-width:90px;padding:2px 4px"></td>` +
+      `<td><select data-k="type">${Object.keys(CAM.TOOL_TYPES).map(k => `<option value="${k}"${t.type === k ? ' selected' : ''}>${CAM.TOOL_TYPES[k]}</option>`).join('')}</select></td>` +
+      `<td><input type="number" data-k="size" min="0" step="0.1" value="${t.size || ''}" ${t.type === 'groove' || t.type === 'part' || t.type === 'drill' ? '' : 'disabled'} style="width:52px"></td>` +
+      `<td><input type="number" data-k="dx" step="0.01" value="${t.dx || 0}" style="width:56px"></td><td><input type="number" data-k="dz" step="0.01" value="${t.dz || 0}" style="width:56px"></td>` +
+      `<td><button class="small" data-act="del" title="Remove tool">×</button></td></tr>`).join('');
+  }
+  function bindTools() {
+    const changed = () => { saveLibrary(); commit(false); };
+    $('toolBody').addEventListener('change', e => {
+      const tr = e.target.closest('tr'), k = e.target.dataset.k; if (!tr || !k) return;
+      const t = state.project.tools.find(x => x.id === tr.dataset.id); if (!t) return;
+      pushUndo();
+      if (e.target.type === 'number') t[k] = parseFloat(e.target.value) || 0; else t[k] = e.target.value;
+      if (k === 'type' && !(t.type === 'groove' || t.type === 'part' || t.type === 'drill')) t.size = 0;
+      changed();
+    });
+    $('toolBody').addEventListener('click', e => {
+      if (e.target.dataset.act !== 'del') return;
+      const id = e.target.closest('tr').dataset.id; pushUndo();
+      state.project.tools = state.project.tools.filter(t => t.id !== id);
+      for (const op of state.project.ops) if (op.toolId === id) op.toolId = '';
+      changed();
+    });
+    $('btnAddTool').addEventListener('click', () => {
+      pushUndo(); const tools = state.project.tools || (state.project.tools = []);
+      tools.push(CAM.newTool('turn', tools.reduce((m, t) => Math.max(m, t.number), 0) + 1, 0)); changed();
+    });
+    $('btnToolsDefault').addEventListener('click', () => {
+      if (state.project.tools.length && !confirm('Replace the tool library with the starter set (T1 turning, T2 grooving, T3 parting, T4 drill)?')) return;
+      pushUndo(); state.project.tools = CAM.defaultTools(); for (const op of state.project.ops) op.toolId = ''; changed();
+    });
+  }
+
   /** Event handlers for the Operations tab (add, select, reorder, enable, duplicate, delete, edit parameters). */
   function bindOps() {
     $('addMenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; const op = CAM.newOp(b.dataset.type, cuttingNow()); pushUndo(); state.project.ops.push(op); state.selectedOp = op.id; commit(false); });
@@ -339,6 +401,7 @@
       if (e.target.type === 'checkbox') op[k] = e.target.checked;
       else if (e.target.type === 'number') op[k] = e.target.value === '' ? null : parseFloat(e.target.value);
       else op[k] = e.target.value;
+      if (k === 'toolId') syncOpToTool(op);
       if (op.type === 'drill' && k === 'dia') { op.peck = cuttingNow(op.dia).peck; toast('Peck depth set to ' + op.peck + ' mm for a Ø' + op.dia + ' drill'); }
       rebuild(); renderOps(); renderProgram(); updateStatus(); draw(); clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 400);
     });
@@ -442,11 +505,13 @@
     $('btnSave').addEventListener('click', () => download(safeName() + '.c5cam.json', JSON.stringify(state.project, null, 1)));
     $('btnOpen').addEventListener('click', () => $('fileProj').click());
     $('fileProj').addEventListener('change', e => readFile(e.target.files[0], text => {
-      try { const p = JSON.parse(text); if (!p.stock || !p.profile) throw new Error('not a project file'); state.project = Object.assign(defaultProject(), p); state.selected = -1; state.selectedOp = null; state.source = 'generated'; state.loaded = null; state.undo.length = 0; restoreDxfRef(); commit(false); fitView(); toast('Project loaded'); }
+      try { const p = JSON.parse(text); if (!p.stock || !p.profile) throw new Error('not a project file'); state.project = Object.assign(defaultProject(), p); if (!Array.isArray(p.tools)) state.project.tools = []; state.selected = -1; state.selectedOp = null; state.source = 'generated'; state.loaded = null; state.undo.length = 0; restoreDxfRef(); commit(false); fitView(); toast('Project loaded'); }
       catch (err) { toast('Could not open project: ' + err.message, 4000); }
     }));
     $('btnImportDxf').addEventListener('click', () => $('fileDxf').click());
     $('fileDxf').addEventListener('change', e => readFile(e.target.files[0], text => openDxfDialog(text, e.target.files[0].name)));
+    $('btnImport3d').addEventListener('click', () => $('file3d').click());
+    $('file3d').addEventListener('change', e => { const f = e.target.files[0]; if (f) f.arrayBuffer().then(buf => openMeshDialog(buf, f.name)); e.target.value = ''; });
     $('btnOpenCnc').addEventListener('click', () => $('fileCnc').click());
     $('fileCnc').addEventListener('change', e => readFile(e.target.files[0], text => {
       const r = Emco.parseProgram(text);
@@ -532,6 +597,77 @@
       if (-bb.zmin > state.project.stock.length) state.project.stock.length = Math.ceil(-bb.zmin + 10);
       $('dlgDxf').close(); commit(false); fitView(); showTab('profile');
     });
+  }
+
+  /* ---------- 3D import dialog ---------- */
+  let meshCtx = null;     // { mesh, name, result } while the dialog is open
+  /** Parse the STL / OBJ file and open the dialog; the profile is computed for the auto-detected axis. */
+  function openMeshDialog(buf, name) {
+    let mesh;
+    try { mesh = Mesh.parse(buf, name); } catch (e) { toast('Could not read ' + name + ': ' + e.message, 4000); return; }
+    meshCtx = { mesh, name, result: null };
+    $('m3Axis').value = 'auto'; $('m3Face').value = 'auto';
+    $('dlgMesh').showModal();
+    updateMeshPreview();
+  }
+  /** Current dialog fields as options for Mesh.toProfile. */
+  function readMeshForm() { return { axis: $('m3Axis').value, faceEnd: $('m3Face').value, scale: parseFloat($('m3Scale').value) || 1, tol: numv('m3Tol', 0.03), hole: $('m3Drill').checked }; }
+  /** Recompute the profile from the model and draw silhouette + fitted profile in the dialog. */
+  function updateMeshPreview() {
+    const m = meshCtx.mesh, res = Mesh.toProfile(m, readMeshForm()); meshCtx.result = res;
+    const arcs = res.profile.filter(p => p.seg && p.seg.type === 'arc').length, i = res.info;
+    $('m3Info').innerHTML = `${m.count} triangles in ${esc(meshCtx.name)}. Axis: model ${i.axis.toUpperCase()}, length ${fmt(i.length, 2)} mm, max Ø${fmt(i.maxDia, 2)} mm. Profile: ${res.profile.length} points (${arcs} arcs).`
+      + (i.hole ? `<br>Centre hole found at the face: Ø${i.hole.dia} × ${i.hole.depth} mm deep.` : '') + (res.warnings.length ? '<br>' + res.warnings.map(esc).join('<br>') : '');
+    const cv = $('m3Preview'), dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 700, H = cv.clientHeight || 260;
+    cv.width = W * dpr; cv.height = H * dpr; const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    if (!res.raw.length) return;
+    const zmin = Math.min(...res.raw.map(p => p.z)), rmax = Math.max(1, ...res.raw.map(p => p.r));
+    const sc = Math.min((W - 40) / Math.max(1e-6, -zmin), (H - 30) / rmax), ox = 20 - zmin * sc, oy = H - 15;
+    const S = p => [ox + p.z * sc, oy - (p.r != null ? p.r : p.x) * sc], css = getComputedStyle(document.documentElement);
+    ctx.strokeStyle = css.getPropertyValue('--axis'); ctx.setLineDash([8, 4, 2, 4]); ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(W, oy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = css.getPropertyValue('--dxf'); ctx.lineWidth = 1; ctx.beginPath(); res.raw.forEach((p, k) => { const [x, y] = S(p); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    ctx.strokeStyle = css.getPropertyValue('--accent'); ctx.lineWidth = 2.5; ctx.beginPath(); Geom.profileToPolyline(res.profile, 0.05).forEach((p, k) => { const [x, y] = S(p); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    ctx.fillStyle = css.getPropertyValue('--accent'); for (const p of res.profile) { const [x, y] = S(p); ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); }
+    const [fx] = S({ z: 0, r: 0 }); ctx.strokeStyle = css.getPropertyValue('--ok'); ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(fx, 0); ctx.lineTo(fx, H); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = css.getPropertyValue('--muted'); ctx.font = '12px sans-serif'; ctx.fillText('Z0 (face)', fx + 4, 14); ctx.fillText('centreline', 4, oy - 4);
+  }
+  /**
+   * Replace the project profile with the imported one and, when asked, generate the
+   * operations: Facing, Rough turning, Finish contour, centre drilling (if a hole was
+   * found) and Parting off, using the current material's cutting data. Stock and start
+   * position are enlarged where the part would not fit.
+   */
+  function applyMeshImport() {
+    const res = meshCtx.result; if (!res || res.profile.length < 2) { toast('No usable profile in this model', 3000); return; }
+    const p = state.project, mkOps = $('m3Ops').checked; pushUndo();
+    p.profile = res.profile; p.dxfText = null; p.dxfMapping = null; state.dxf = null;
+    if (p.name === 'New part') p.name = meshCtx.name.replace(/\.[^.]+$/, '');
+    const zEnd = res.profile[res.profile.length - 1].z;
+    if (p.stock.diameter < res.info.maxDia + 0.2) p.stock.diameter = Math.ceil(res.info.maxDia + 0.4);
+    if (p.stock.length < -zEnd + 10) p.stock.length = Math.ceil(-zEnd + 10);
+    p.settings.startDia = Math.max(p.settings.startDia, p.stock.diameter + 2);
+    if (mkOps) {
+      const cd = cuttingNow(), ops = []; p.stock.zFront = 1;
+      // turning first, then drill, then parting: keeps the number of tool swaps at a minimum
+      const face = CAM.newOp('face', cd); face.zStart = 1; ops.push(face, CAM.newOp('rough', cd), CAM.newOp('finish', cd));
+      const hole = res.info.hole;
+      if (hole) {
+        const d = CAM.newOp('drill'); d.dia = hole.dia; d.depth = hole.depth; CAM.applyCutting(d, cuttingNow(hole.dia)); d.name = 'Drill Ø' + hole.dia; ops.push(d);
+        if (p.tools.length && !p.tools.some(t => t.type === 'drill' && Math.abs(t.size - hole.dia) < 0.05)) {      // the library has no drill of this size: add one
+          const nt = CAM.newTool('drill', p.tools.reduce((m, t) => Math.max(m, t.number), 0) + 1, hole.dia); p.tools.push(nt); d.toolId = nt.id; saveLibrary();
+        } else if (p.tools.length) d.toolId = p.tools.find(t => t.type === 'drill' && Math.abs(t.size - hole.dia) < 0.05).id;
+      }
+      const part = CAM.newOp('part', cd); part.z = zEnd; syncOpToTool(part); ops.push(part);
+      p.ops = ops; state.selectedOp = null;
+    }
+    state.selected = -1; state.source = 'generated';
+    $('dlgMesh').close(); commit(false); fitView(); showTab(mkOps ? 'ops' : 'profile');
+    toast(mkOps ? 'Profile and ' + p.ops.length + ' operations created from the model, check them before running' : 'Profile imported from the model', 4000);
+  }
+  function bindMeshDialog() {
+    for (const id of ['m3Axis', 'm3Face', 'm3Scale', 'm3Tol', 'm3Drill']) $(id).addEventListener('change', updateMeshPreview);
+    $('m3Cancel').addEventListener('click', () => $('dlgMesh').close());
+    $('m3Ok').addEventListener('click', applyMeshImport);
   }
 
   /* ---------- canvas ---------- */
@@ -782,9 +918,9 @@
   /* ---------- init ---------- */
   /** Restore the last project and settings from localStorage, wire up all handlers and draw. */
   function init() {
-    try { const saved = localStorage.getItem(LS_PROJECT); if (saved) state.project = Object.assign(defaultProject(), JSON.parse(saved)); } catch (e) { /* ignore */ }
+    try { const saved = localStorage.getItem(LS_PROJECT); if (saved) { const q = JSON.parse(saved); state.project = Object.assign(defaultProject(), q); if (!Array.isArray(q.tools)) state.project.tools = []; } } catch (e) { /* ignore */ }
     loadSerial();
-    bindSetup(); bindProfileTable(); bindOps(); bindProgram(); bindSerial(); bindFiles(); bindDxfDialog(); bindCanvas(); bindChrome();
+    bindSetup(); bindProfileTable(); bindTools(); bindOps(); bindProgram(); bindSerial(); bindFiles(); bindDxfDialog(); bindMeshDialog(); bindCanvas(); bindChrome();
     renderSerial(); restoreDxfRef(); rebuild(); renderAll();
     requestAnimationFrame(fitView);
   }
