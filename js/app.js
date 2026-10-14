@@ -282,7 +282,7 @@
     groove: [['z', 'Groove right edge Z', 'mm'], ['width', 'Width', 'mm'], ['dia', 'Bottom diameter', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's'], ['stepFactor', 'Step (fraction of tool width)', '']],
     part: [['z', 'Part end face Z (= −length)', 'mm'], ['toolWidth', 'Tool width', 'mm'], ['toolRef', 'Programmed tool edge', 'select:right=Right (+Z) edge,left=Left (−Z) edge'], ['finalDia', 'Stop at diameter', 'mm'], ['feed', 'Feed', 'mm/min'], ['dwell', 'Dwell at bottom (Mk4)', 's']],
     drill: [['manual', 'Drill centred by hand (Z moves only)', 'bool'], ['dia', 'Drill diameter', 'mm'], ['depth', 'Depth', 'mm'], ['peck', 'Peck depth (0 = none)', 'mm'], ['feed', 'Feed', 'mm/min'], ['zTop', 'Surface Z', 'mm'], ['retract', 'Re-entry gap', 'mm']],
-    thread: [['dia', 'Major diameter', 'mm'], ['pitch', 'Pitch', 'mm'], ['zStart', 'Start Z (in the air)', 'mm'], ['zEnd', 'End Z', 'mm'], ['depth', 'Total depth (radial)', 'mm'], ['passes', 'Passes', '']],
+    thread: [['dia', 'Major diameter', 'mm'], ['pitch', 'Pitch', 'mm'], ['zStart', 'Start Z (in the air)', 'mm'], ['zEnd', 'End Z', 'mm'], ['depth', 'Total depth (radial)', 'mm'], ['passes', 'Passes', ''], ['dwell', 'Pause before each pass (Mk4)', 's']],
     tool: [['tool', 'Tool number', ''], ['dx', 'X offset', 'mm'], ['dz', 'Z offset', 'mm'], ['pause', 'Pause before (M00 / G20)', 'bool']],
     custom: [['text', 'Blocks, one per line (e.g. G01 X1200 Z-500 F100)', 'textarea']]
   };
@@ -290,7 +290,7 @@
   const OP_NOTES = {
     rough: 'Cuts parallel to Z from the stock down to the profile plus allowance, entering walls from above. Pull-out is a 45° move into already-cut material, like the original Emco examples.',
     finish: 'Follows the profile exactly with G01 / G02 / G03. Tool nose radius is not compensated.',
-    thread: 'Needs the threading option. Verify the K-field layout on your machine.',
+    thread: 'Needs the threading option. Pitch is written in hundredths of a mm per revolution (K100 = 1.00 mm), as in the lathe manual. A longer run-up (Start Z) and a short pause before each pass can help if the lathe alarms during a G33.',
     tool: 'Block layout for M06 / G26 offsets is unverified. Retracts to the start Z first.',
     custom: 'Values are in machine units (X diameter and Z in 1/100 mm) unless written with a decimal point (12.5 = 12.50 mm).',
     face: 'Passes from the front of the material down to End Z, cutting toward the centre.',

@@ -25,7 +25,7 @@
     groove: { label: 'Groove',           icon: '⊔', defaults: { z: -10, width: 3, dia: 10, toolWidth: 2, toolRef: 'right', feed: 30, dwell: 0, stepFactor: 0.75 } },
     part:   { label: 'Parting off',      icon: '⟂', defaults: { z: -40, toolWidth: 2, toolRef: 'right', finalDia: 0, feed: 25, dwell: 0 } },
     drill:  { label: 'Centre drilling',  icon: '⌀', defaults: { dia: 3, depth: 10, peck: 3, feed: 40, zTop: 0, retract: 0.5, manual: true } },
-    thread: { label: 'Thread (G33)',     icon: '⌇', defaults: { dia: 10, pitch: 1.0, zStart: 2, zEnd: -15, depth: 0.61, passes: 6 } },
+    thread: { label: 'Thread (G33)',     icon: '⌇', defaults: { dia: 10, pitch: 1.0, zStart: 2, zEnd: -15, depth: 0.61, passes: 6, dwell: 0 } },
     tool:   { label: 'Tool change',      icon: '⚒', defaults: { tool: 1, dx: 0, dz: 0, pause: true } },
     custom: { label: 'Custom blocks',    icon: '✎', defaults: { text: 'G00 X2700 Z100' } }
   };
@@ -442,11 +442,13 @@
     const clearX = ctx.clearX, R = num(op.dia, 10) / 2, pitch = num(op.pitch, 1), depth = Math.max(0.05, num(op.depth, 0.6)), passes = Math.max(1, Math.round(num(op.passes, 5)));
     const zS = num(op.zStart, 2), zE = num(op.zEnd, -10);
     em.retractSafe();
-    em.warnings.push('Thread: G33 needs the threading option on the lathe. The K (pitch) field layout is unverified; compare with a thread program from your machine before running it.');
+    em.warnings.push('Thread: the carriage speed follows the spindle (pitch × rpm). With pitch ' + pitch + ' mm keep the spindle at or below about ' + Math.floor(FEED_MAX / Math.max(0.01, pitch) / 10) * 10 + ' rpm (the axis feed limit is about ' + FEED_MAX + ' mm/min), and have it at full speed before START.');
+    em.warnings.push('Thread: G33 needs the threading option on the lathe. The block is G33 with Z and K (pitch in hundredths of a mm per revolution), as the lathe prompts for it. If the lathe alarms during a pass, try a longer run-up (Start Z) or a pause before each pass; the G04 pause layout is unverified.');
     for (let i = 1; i <= passes; i++) {
       const x = R - depth * Math.sqrt(i / passes);
       em.travel(R + clearX, zS);
       em.rapid(x, zS);
+      if (num(op.dwell, 0) > 0 && ctx.controller.dwell) em.raw({ g: 4, x: Math.round(num(op.dwell, 0) * 100) });   // let the spindle and axes settle before the synchronised move
       em.raw({ g: 33, z: em.zz(zE), kf: Math.round(pitch * 100) }); em._setPos(x, zE);
       em.rapid(R + clearX, zE);
       em.rapid(R + clearX, zS);
